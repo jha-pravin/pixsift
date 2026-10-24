@@ -63,3 +63,12 @@ def test_png_edit_keeps_format(tmp_path):
 def test_crop_outside_rejected():
     with pytest.raises(ValueError):
         EditRequest(crop=Crop(x=0.5, y=0, w=0.8, h=1))
+
+
+def test_lossless_overwrite_replaces_the_original_in_place(tmp_path):
+    # The source must be closed before it's replaced (Windows refuses to replace open files).
+    src = gradient(tmp_path / "e.jpg")
+    out = apply_edit(str(src), EditRequest(rotate=90, mode="overwrite"), tmp_path / "bk")
+    assert out == src
+    with Image.open(src) as im:
+        assert im.getexif()[ORIENTATION] == 6

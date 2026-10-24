@@ -125,14 +125,17 @@ def apply_edit(src: str, req: EditRequest, backups_dir: Path) -> Path:
         backups_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src_path, backups_dir / f"{int(time.time())}_{src_path.name}")
 
+    if fmt == "JPEG" and ext == src_path.suffix.lower() and req.geometry_only:
+        with Image.open(src_path) as img:
+            exif = img.getexif()
+        exif[ORIENTATION] = _new_orientation(exif.get(ORIENTATION, 1), req)
+        # Written only after the source is closed: Windows can't replace a file that is open.
+        _atomic_write(dest, _replace_jpeg_exif(src_path.read_bytes(), exif.tobytes()))
+        return dest
+
     with Image.open(src_path) as img:
         exif = img.getexif()
         icc = img.info.get("icc_profile")
-        if fmt == "JPEG" and ext == src_path.suffix.lower() and req.geometry_only:
-            exif[ORIENTATION] = _new_orientation(exif.get(ORIENTATION, 1), req)
-            data = _replace_jpeg_exif(src_path.read_bytes(), exif.tobytes())
-            _atomic_write(dest, data)
-            return dest
 
         out = _transform(ImageOps.exif_transpose(img), req)
         if req.crop:

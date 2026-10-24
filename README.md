@@ -21,7 +21,13 @@ your computer; nothing is uploaded. Originals are never changed unless you expli
 | **Basic editing** | Rotate, flip, crop (free or 1:1, 4:3, 3:2, 16:9), brightness, contrast, saturation. Saves a new copy next to the original by default (`IMG_1234_edited.jpg`); "Replace original" keeps a backup. JPEG rotate/flip is lossless (only the orientation tag changes). Names and tags carry over to edited copies. |
 | **Search & filters** | File name or tag search, type, one or more people ("pictures with Mom *and* Dad"), tag, folder, month range, duplicates, sort. |
 
-## Running it
+## Download
+
+Get the app for Windows, Apple-silicon Macs or Intel Macs from the
+[latest release](https://github.com/jha-pravin/pixsift/releases/latest). The [testing guide](TESTING.md) covers
+installing the unsigned builds and what to try.
+
+## Running from source
 
 ### Desktop app (recommended)
 
@@ -33,11 +39,17 @@ cd ../backend && .venv/bin/python -m pixsift.desktop
 
 ### Build an installable app
 
-- macOS: `packaging/build_mac.sh` produces `dist/PixSift.app` (drag it to Applications).
-- Windows: `.\packaging\build_windows.ps1` (PowerShell, with Python 3.11+ and Node 20+) produces `dist\PixSift\PixSift.exe`.
+Releases are built by GitHub Actions (`.github/workflows/build.yml`). Every push runs the tests on macOS and
+Windows and builds all three apps; each build checks itself with `PixSift --self-test`. Pushing a version tag
+publishes a release:
 
-The build is unsigned. On macOS, the first time you open it, right-click the app and choose **Open**. On Windows,
-choose **More info → Run anyway** in SmartScreen.
+```bash
+git tag v0.2.1 && git push origin v0.2.1
+```
+
+To build locally instead: `packaging/build_mac.sh` gives `dist/PixSift.app`, and `.\packaging\build_windows.ps1`
+(PowerShell, Python 3.11+, Node 20+) gives `dist\PixSift\PixSift.exe`. Builds are unsigned; see
+[TESTING.md](TESTING.md) for opening them.
 
 ### Browser mode (development)
 
@@ -109,7 +121,7 @@ packaging/  PyInstaller spec, icon, build scripts
 - Faces that are sideways or upside-down in the stored picture (wrong orientation) aren't detected.
 - Picture types are a best guess. Logos and illustrations are the least reliable; correct them from the viewer.
 - GPS locations are shown as coordinates. There's no offline place-name lookup yet.
-- Windows build scripts are included, but the app has so far only been run on macOS.
+- The Windows build is tested automatically, but has had little hands-on use so far. Feedback is welcome.
 
 ## Tests
 

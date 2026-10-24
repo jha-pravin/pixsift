@@ -35,6 +35,8 @@ def lib(tmp_path):
     (root / "notes.txt").write_text("not an image")
     make_jpeg(root / ".hidden" / "h.jpg")
     make_jpeg(root / "Lib.photoslibrary" / "x.jpg")
+    make_jpeg(root / "PROGRAM FILES" / "app" / "icon.jpg")  # Windows system folder, any case
+    make_jpeg(root / "node_modules" / "pkg" / "img.jpg")
     (root / "broken.jpg").write_bytes(b"\xff\xd8" + b"0" * 20000)
     return root
 

@@ -11,14 +11,17 @@ IMAGE_EXTENSIONS = frozenset(
     {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".gif", ".tif", ".tiff", ".bmp"}
 )
 
-# Directory names never descended into (system, caches, dev trees).
-SKIP_DIR_NAMES = frozenset(
-    {"node_modules", "__pycache__", "Library", "AppData", "$RECYCLE.BIN", "System Volume Information"}
-)
+# Directory names never descended into (system, caches, dev trees). Compared case-insensitively.
+SKIP_DIR_NAMES = frozenset(n.lower() for n in (
+    "node_modules", "__pycache__", "Library", "AppData", "$RECYCLE.BIN", "System Volume Information",
+    # Windows system folders, met when a whole drive is scanned.
+    "Windows", "Program Files", "Program Files (x86)", "ProgramData", "Recovery", "$WinREAgent",
+    "$Windows.~BT", "$Windows.~WS", "PerfLogs", "MSOCache",
+))
 
 # Directory suffixes that are app bundles / managed libraries, not user folders.
 # Photos/Lightroom libraries hold thousands of derivatives that would show up as duplicates.
-SKIP_DIR_SUFFIXES = (".app", ".photoslibrary", ".lrdata", ".photosLibrary", ".aplibrary")
+SKIP_DIR_SUFFIXES = (".app", ".photoslibrary", ".lrdata", ".aplibrary")  # lower-case
 
 
 @dataclass(frozen=True)
