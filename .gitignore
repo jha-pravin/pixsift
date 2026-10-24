@@ -1,0 +1,12 @@
+.DS_Store
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+node_modules/
+frontend/dist/
+backend/.demo-data/
+.demo-data/
+/dist/
+/build/
+.claude/

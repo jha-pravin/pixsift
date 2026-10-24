@@ -1,0 +1,38 @@
+[project]
+name = "pixsift"
+version = "0.2.0"
+description = "Local-first picture organizer: scan, classify, tag faces, browse by person."
+requires-python = ">=3.11"
+license = "PolyForm-Noncommercial-1.0.0"
+authors = [{ name = "Pravin Jha" }]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pillow>=11.0",
+    "pillow-heif>=0.20",
+    "platformdirs>=4.0",
+    "numpy>=2.0",
+    "onnxruntime>=1.20",
+    "opencv-python-headless>=4.10",
+    "scikit-learn>=1.5",
+    "tokenizers>=0.20",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "httpx2"]
+desktop = ["pywebview>=5.0"]
+build = ["pyinstaller>=6.10"]
+
+[project.scripts]
+pixsift = "pixsift.__main__:main"
+pixsift-desktop = "pixsift.desktop:main"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["pixsift*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
