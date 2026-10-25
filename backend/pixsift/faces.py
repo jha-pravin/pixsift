@@ -113,9 +113,15 @@ def _years(iso: str | None) -> float:
 def _time_weight(dq: np.ndarray, dr: np.ndarray) -> np.ndarray:
     """1.0 for photos taken together, falling towards (1 - TIME_INFLUENCE) for photos years apart.
     Unknown dates count as 'together' (no penalty)."""
-    gap = np.abs(dq[:, None] - dr[None, :])
-    w = np.exp(-np.nan_to_num(gap, nan=0.0) / TIME_SCALE_YEARS)
-    return (1 - TIME_INFLUENCE) + TIME_INFLUENCE * w
+    # float32 and in place: this runs on (faces x reference faces) matrices of tens of millions of cells.
+    w = np.subtract.outer(dq.astype(np.float32), dr.astype(np.float32))
+    np.abs(w, out=w)
+    np.nan_to_num(w, copy=False, nan=0.0)
+    w *= np.float32(-1.0 / TIME_SCALE_YEARS)
+    np.exp(w, out=w)
+    w *= np.float32(TIME_INFLUENCE)
+    w += np.float32(1 - TIME_INFLUENCE)
+    return w
 
 
 class Matcher:
@@ -164,7 +170,8 @@ class Matcher:
         dq_all = np.array([_years(d) for d in dates] if dates else [np.nan] * len(q), dtype=np.float64)
         for start in range(0, len(q), chunk):
             qs, dq = q[start:start + chunk], dq_all[start:start + chunk]
-            adj = (qs @ self._emb.T) * _time_weight(dq, self._dates)  # time-adjusted similarity
+            adj = qs @ self._emb.T
+            adj *= _time_weight(dq, self._dates)  # time-adjusted similarity
             for p, sl in enumerate(self._slices):
                 block = adj[:, sl]
                 k = min(KNN, block.shape[1])
@@ -262,15 +269,23 @@ def unnamed_groups(db: Database, limit: int = 300) -> list[dict]:
     matcher = Matcher(db)
     people = {r["id"]: r for r in db.query("SELECT id, name, hidden FROM persons")}
     out = []
+    # One query and one scoring pass for all shown groups (not one per group).
+    ids = [g["cluster_id"] for g in groups]
+    rows = db.query(
+        "SELECT f.id, f.image_id, f.embedding, f.cluster_id, i.taken_at FROM faces f JOIN images i ON i.id=f.image_id "
+        f"WHERE f.cluster_id IN ({','.join('?' * len(ids))}) AND f.person_id IS NULL AND f.ignored=0 "
+        "ORDER BY f.cluster_id, f.score DESC", ids)
+    scores = (matcher.scores(np.stack([from_blob(r["embedding"]) for r in rows]), [r["taken_at"] for r in rows])
+              if matcher and rows else None)
+    by_group: dict[int, list[int]] = {}
+    for n, r in enumerate(rows):
+        by_group.setdefault(r["cluster_id"], []).append(n)
     for g in groups:
-        faces = db.query(
-            "SELECT f.id, f.image_id, f.embedding, i.taken_at FROM faces f JOIN images i ON i.id=f.image_id "
-            "WHERE f.cluster_id=? AND f.person_id IS NULL AND f.ignored=0 ORDER BY f.score DESC", (g["cluster_id"],)
-        )
+        members = by_group.get(g["cluster_id"], [])
         suggestion = None
-        if matcher:
+        if scores is not None and members:
             # Each face votes; the group's suggestion is the person with the best average score.
-            sc = matcher.scores(np.stack([from_blob(f["embedding"]) for f in faces]), [f["taken_at"] for f in faces])
+            sc = scores[members]
             mean = np.where(sc > -1, sc, 0).mean(axis=0)
             j = int(np.argmax(mean))
             if mean[j] >= SUGGEST_MIN_SIM:
@@ -280,7 +295,7 @@ def unnamed_groups(db: Database, limit: int = 300) -> list[dict]:
         out.append({
             "cluster_id": g["cluster_id"],
             "count": g["n"],
-            "faces": [{"id": f["id"], "image_id": f["image_id"]} for f in faces[:8]],
+            "faces": [{"id": rows[n]["id"], "image_id": rows[n]["image_id"]} for n in members[:8]],
             "suggestion": suggestion,
         })
     return out

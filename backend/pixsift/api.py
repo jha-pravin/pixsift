@@ -283,10 +283,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             where.append("i.category=?")
             params.append(category)
         for pid in person:  # every listed person must be in the picture
-            where.append("EXISTS (SELECT 1 FROM faces f WHERE f.image_id=i.id AND f.person_id=?)")
+            # IN, not a correlated EXISTS: SQLite looks the person's photos up once via ix_faces_person_image
+            # instead of scanning their faces again for every picture in the library.
+            where.append("i.id IN (SELECT image_id FROM faces WHERE person_id=?)")
             params.append(pid)
         if tag:
-            where.append("EXISTS (SELECT 1 FROM tags t WHERE t.image_id=i.id AND t.tag=?)")
+            where.append("i.id IN (SELECT image_id FROM tags WHERE tag=?)")
             params.append(tag)
         if folder:
             where.append("i.folder=?")

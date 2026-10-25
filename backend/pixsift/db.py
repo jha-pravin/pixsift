@@ -114,6 +114,11 @@ ALTER TABLE persons ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """,
+"""
+-- "Photos of person X" / "photos with tag Y" lookups at library scale (tens of thousands of photos).
+CREATE INDEX ix_faces_person_image ON faces(person_id, image_id);
+CREATE INDEX ix_tags_tag_image ON tags(tag, image_id);
+""",
 ]
 
 IMAGE_COLUMNS = (
@@ -133,6 +138,12 @@ class Database:
         version = c.execute("PRAGMA user_version").fetchone()[0]
         for i, script in enumerate(MIGRATIONS[version:], start=version + 1):
             c.executescript(f"BEGIN;\n{script}\nPRAGMA user_version={i};\nCOMMIT;")
+        if version < len(MIGRATIONS):
+            c.execute("ANALYZE")  # table statistics, so the query planner picks the right indexes
+
+    def optimize(self) -> None:
+        """Refresh planner statistics after big changes (cheap: SQLite only re-analyses what changed)."""
+        self.conn().execute("PRAGMA optimize")
 
     def conn(self) -> sqlite3.Connection:
         c = getattr(self._local, "conn", None)

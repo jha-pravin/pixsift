@@ -117,6 +117,9 @@ export interface JobStatus {
   to_analyze: number
   analyzed: number
   analyze_started: number | null
+  analyze_base: number
+  to_scan: number
+  scan_started: number | null
   current_file: string | null
   timeouts: number
   finished_at: number | null
@@ -289,13 +292,20 @@ export const CATEGORY_LABELS: Record<CategoryFilter, string> = {
   unsorted: 'Not analysed yet',
 }
 
-/** Speed and time left for the analysis phase, e.g. { rate: 12.3, left: "about 25 min" }. */
-export function analysisEta(job: JobStatus | null): { rate: number; left: string } | null {
-  if (!job || job.phase !== 'analyzing' || !job.analyze_started || job.analyzed < 32) return null
-  const rate = job.analyzed / Math.max(1, Date.now() / 1000 - job.analyze_started)
-  const secs = (job.to_analyze - job.analyzed) / rate
+/** Speed and time left for the current phase (scanning+analysing, or leftover analysis). */
+export function jobEta(job: JobStatus | null): { rate: number; left: string; done: number; total: number } | null {
+  if (!job || job.state !== 'running') return null
+  let done: number, total: number, base: number, started: number | null
+  if (job.phase === 'scanning') {
+    ;[done, total, base, started] = [job.processed, job.to_scan, 0, job.scan_started]
+  } else if (job.phase === 'analyzing') {
+    ;[done, total, base, started] = [job.analyzed, job.to_analyze, job.analyze_base, job.analyze_started]
+  } else return null
+  if (!started || done - base < 16 || total <= 0) return null
+  const rate = (done - base) / Math.max(1, Date.now() / 1000 - started)
+  const secs = (total - done) / rate
   const left = secs < 90 ? 'about a minute' : secs < 5400 ? `about ${Math.round(secs / 60)} min` : `about ${(secs / 3600).toFixed(1)} h`
-  return { rate, left }
+  return { rate, left, done, total }
 }
 
 export const formatBytes = (n: number) => {

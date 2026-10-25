@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { analysisEta, api, formatBytes, formatDate, pickFolders, type Drive } from '../api'
+import { jobEta, api, formatBytes, formatDate, pickFolders, type Drive } from '../api'
 import { Icon } from '../components/Icon'
 import { useJob } from '../hooks/job'
 
@@ -141,11 +141,12 @@ export function Sources() {
         <section className="card">
           <h2>{running ? phaseLabel(job.phase) : `Last run: ${job.state}`}</h2>
           {job.current_root && <p className="muted small path">{job.current_root}</p>}
-          {job.phase === 'analyzing' && job.to_analyze > 0 && (
+          {((job.phase === 'analyzing' && job.to_analyze > 0) || (job.phase === 'scanning' && job.to_scan > 0)) && (
             <>
-              <progress value={job.analyzed} max={job.to_analyze} />
+              <progress value={job.phase === 'scanning' ? job.processed : job.analyzed}
+                max={job.phase === 'scanning' ? job.to_scan : job.to_analyze} />
               <p className="muted small">
-                {(() => { const eta = analysisEta(job); return eta ? `${eta.rate.toFixed(1)} pictures/s · ${eta.left} left` : 'Starting…' })()}
+                {(() => { const eta = jobEta(job); return eta ? `${eta.rate.toFixed(1)} pictures/s · ${eta.left} left` : 'Starting…' })()}
                 {job.current_file && <><br />Now: <span className="path">{job.current_file}</span></>}
               </p>
             </>
@@ -184,5 +185,5 @@ export function Sources() {
 const isMac = navigator.platform.toLowerCase().includes('mac')
 
 function phaseLabel(phase: string | null) {
-  return { models: 'Downloading AI models…', scanning: 'Scanning folders…', analyzing: 'Recognising faces and picture types…', grouping: 'Grouping faces…' }[phase ?? ''] ?? 'Working…'
+  return { models: 'Downloading AI models…', scanning: 'Scanning and analysing pictures…', analyzing: 'Analysing remaining pictures…', grouping: 'Grouping faces…' }[phase ?? ''] ?? 'Working…'
 }

@@ -72,7 +72,9 @@ def self_test() -> int:
             req = urllib.request.Request(f"{base}/api/health", headers={"Cookie": f"pixsift_token={settings.token}"})
             health = json.load(urllib.request.urlopen(req))
             ui = urllib.request.urlopen(f"{base}/").read().decode()
-            ok = health.get("version") and '<div id="root">' in ui
+            from . import decode
+            fast_decoder = sys.platform != "darwin" or decode.Quartz is not None  # ImageIO bundled on macOS
+            ok = health.get("version") and '<div id="root">' in ui and fast_decoder
             if sys.stdout:  # windowed builds have no console
                 print(f"PixSift {health.get('version')} self-test {'passed' if ok else 'FAILED'}")
             return 0 if ok else 1

@@ -8,17 +8,16 @@ from pathlib import Path
 import cv2
 import numpy as np
 import onnxruntime as ort
-from PIL import Image, ImageOps
-from pillow_heif import register_heif_opener
+from PIL import Image
 from tokenizers import Tokenizer
 
+from .decode import ANALYSIS_MAX_SIDE, decode
 from .models import ModelStore
 
 cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
 cv2.setNumThreads(1)  # pictures are analysed in parallel already; nested OpenCV threads only oversubscribe the CPU
-register_heif_opener()  # HEIC/HEIF (iPhone photos)
 
-ANALYSIS_MAX_SIDE = 1280
+FACE_DETECT_MAX_SIDE = 960  # detection input: ~45% less work than 1280, keeps faces down to ~24 px
 FACE_SCORE_MIN = 0.85
 FACE_MIN_PX = 24
 FACE_MIN_REL = 0.025  # face width relative to the longer image side; drops crowd/background faces
@@ -68,15 +67,7 @@ class AnalysisResult:
 
 
 def load_rgb(path: str, max_side: int = ANALYSIS_MAX_SIDE) -> Image.Image:
-    with Image.open(path) as img:
-        img.draft("RGB", (max_side, max_side))
-        img = ImageOps.exif_transpose(img)
-        img.thumbnail((max_side, max_side))
-        if img.mode == "RGBA":  # flatten transparency onto white (screenshots/graphics)
-            bg = Image.new("RGB", img.size, "white")
-            bg.paste(img, mask=img.split()[3])
-            return bg
-        return img.convert("RGB")
+    return decode(path, max_side)
 
 
 class Analyzer:
@@ -156,8 +147,13 @@ class Analyzer:
 
     def detect_faces(self, img: Image.Image) -> list[FaceResult]:
         det, rec = self._face_models()
-        bgr = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
+        small = img
+        if max(img.size) > FACE_DETECT_MAX_SIDE:
+            small = img.copy()
+            small.thumbnail((FACE_DETECT_MAX_SIDE, FACE_DETECT_MAX_SIDE))
+        bgr = cv2.cvtColor(np.asarray(small), cv2.COLOR_RGB2BGR)
         h, w = bgr.shape[:2]
+        sx, sy = img.width / w, img.height / h  # crops are cut from the full-size image
         det.setInputSize((w, h))
         _, rows = det.detect(bgr)
         results = []
@@ -171,14 +167,17 @@ class Analyzer:
                 box=(max(0.0, x / w), max(0.0, y / h), min(fw / w, 1.0), min(fh / h, 1.0)),
                 score=float(row[-1]),
                 embedding=emb,
-                crop=_square_crop(img, x, y, fw, fh),
+                crop=_square_crop(img, x * sx, y * sy, fw * sx, fh * sy),
             ))
         return results
 
     # ---- Combined ---------------------------------------------------------------------------------
 
     def analyze(self, path: str, *, filename: str, camera: bool) -> AnalysisResult:
-        img = load_rgb(path)
+        return self.analyze_image(load_rgb(path), filename=filename, camera=camera)
+
+    def analyze_image(self, img: Image.Image, *, filename: str, camera: bool) -> AnalysisResult:
+        """Analyse an already-decoded picture (the scan decodes each file once for thumbnail + analysis)."""
         faces = self.detect_faces(img)
         emb = self._clip_embed(img)
         face_rel = max((f.box[2] for f in faces), default=0.0)

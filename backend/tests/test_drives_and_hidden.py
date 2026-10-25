@@ -27,7 +27,7 @@ def env(tmp_path):
     app.state.watcher.lister = lambda: list(mounts)
     # These tests are about scanning: skip the model download / analysis step of each job.
     app.state.pipeline.models.ensure = lambda cancel=None: None
-    app.state.pipeline._analyze_pending = lambda: None
+    app.state.pipeline._analyze_pending = lambda *args: None
     with TestClient(app, cookies={"pixsift_token": "t"}) as c:
         yield c, app, mounts, tmp_path
 

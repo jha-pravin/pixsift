@@ -32,7 +32,8 @@ export function JobProvider({ children }: { children: ReactNode }) {
       if (!next) return
       setJob(next)
       // Refresh visible data every few seconds while running, and once when the job ends.
-      if (running && (next.state !== 'running' || ++ticks.current % 5 === 0)) bump()
+      // Lists refresh in place (see usePagedImages); every 15 s is plenty and keeps heavy pages light.
+      if (running && (next.state !== 'running' || ++ticks.current % 15 === 0)) bump()
     }, running ? 1000 : 5000)
     return () => clearInterval(t)
   }, [running, bump])

@@ -1,4 +1,4 @@
-"""Per-file work: quick hash, EXIF metadata and thumbnail, all from a single image open."""
+"""Per-file work: quick hash, EXIF metadata, thumbnail and (optionally) analysis, from a single decode."""
 
 import hashlib
 import os
@@ -6,10 +6,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from PIL import ExifTags, Image, ImageOps
-from pillow_heif import register_heif_opener
+from PIL import ExifTags, Image
 
-register_heif_opener()
+from .decode import ANALYSIS_MAX_SIDE, decode
+
 Image.MAX_IMAGE_PIXELS = 200_000_000  # allow big panoramas, still guard against decompression bombs
 
 _CHUNK = 1 << 20  # 1 MiB
@@ -79,8 +79,14 @@ def thumb_relpath(digest: str) -> str:
     return f"{digest[:2]}/{digest}.webp"
 
 
-def process_file(path: str, size: int, mtime: float, thumbs_dir: Path, thumb_size: int) -> dict[str, Any]:
-    """Build a full `images` row for one file. Never raises: failures are recorded in `error`."""
+def process_file(path: str, size: int, mtime: float, thumbs_dir: Path, thumb_size: int,
+                 analyzer=None) -> dict[str, Any]:
+    """Build a full `images` row for one file, reading and decoding it only once. Never raises: failures are
+    recorded in `error`.
+
+    With an analyzer, the same decoded image is also analysed (faces + picture type) and the result is
+    returned under "_analysis" (None = analysed, nothing usable). Without the key, analysis is still pending.
+    """
     p = Path(path)
     rec: dict[str, Any] = {
         "path": path, "folder": str(p.parent), "filename": p.name, "ext": p.suffix.lower(),
@@ -91,23 +97,27 @@ def process_file(path: str, size: int, mtime: float, thumbs_dir: Path, thumb_siz
     try:
         digest = quick_hash(path, size)
         rec["quick_hash"] = digest
-        with Image.open(path) as img:
+        with Image.open(path) as img:  # header + EXIF only; no pixel decode
             rec.update(read_exif(img))
-            w, h = img.size  # from the header; no pixel decode yet
+            w, h = img.size
             if img.getexif().get(_T.Orientation) in (5, 6, 7, 8):
                 w, h = h, w  # report dimensions as the user sees them
             rec["width"], rec["height"] = w, h
-            rel = thumb_relpath(digest)
-            out = thumbs_dir / rel
+        rel = thumb_relpath(digest)
+        out = thumbs_dir / rel
+        if analyzer is not None or not out.exists():
+            big = decode(path, ANALYSIS_MAX_SIDE if analyzer is not None else thumb_size * 2)
             if not out.exists():
-                img.draft("RGB", (thumb_size * 2, thumb_size * 2))  # fast JPEG downscale on decode
-                img = ImageOps.exif_transpose(img)
-                img.thumbnail((thumb_size, thumb_size))
-                if img.mode not in ("RGB", "RGBA"):
-                    img = img.convert("RGBA" if "A" in img.getbands() else "RGB")
+                thumb = big.copy()
+                thumb.thumbnail((thumb_size, thumb_size))
                 out.parent.mkdir(parents=True, exist_ok=True)
-                img.save(out, "WEBP", quality=80, method=4)
-            rec["thumb"] = rel
+                thumb.save(out, "WEBP", quality=80, method=4)
+            if analyzer is not None:
+                try:
+                    rec["_analysis"] = analyzer.analyze_image(big, filename=p.name, camera=bool(rec["camera_make"]))
+                except Exception:
+                    rec["_analysis"] = None
+        rec["thumb"] = rel
     except Exception as exc:  # corrupt / unsupported files must not stop a scan
         rec["error"] = f"{type(exc).__name__}: {exc}"[:500]
     rec["date_source"] = "exif" if rec["taken_at"] else "file"

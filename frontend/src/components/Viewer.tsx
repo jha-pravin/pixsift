@@ -37,6 +37,21 @@ export function Viewer({ items, total, index, loadMore, onIndex, onClose }: Prop
   const filmRef = useRef<HTMLDivElement>(null)
   const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null)
 
+  // Stay on the same picture when the list refreshes underneath (e.g. new photos added above it).
+  // Navigation changes `index` (remember the picture); a refresh changes `items` (find it again).
+  const currentId = useRef<number | null>(null)
+  const indexRef = useRef(index)
+  useEffect(() => {
+    indexRef.current = index
+    currentId.current = items[index]?.id ?? null
+  }, [index]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const id = currentId.current
+    if (id === null || items[indexRef.current]?.id === id) return
+    const moved = items.findIndex((i) => i.id === id)
+    if (moved >= 0) onIndex(moved)
+  }, [items]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const reload = useCallback(() => {
     if (item) api.image(item.id).then(setDetail).catch(() => setDetail(null))
   }, [item])

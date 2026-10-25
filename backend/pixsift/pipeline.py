@@ -40,6 +40,9 @@ class JobStatus:
     to_analyze: int = 0
     analyzed: int = 0
     analyze_started: float | None = None
+    analyze_base: int = 0             # pictures already analysed when the leftover pass started
+    to_scan: int = 0                  # new/changed files this run (known after the folder walk)
+    scan_started: float | None = None
     current_file: str | None = None
     timeouts: int = 0  # pictures skipped because analysis hung
     auto_named: int = 0
@@ -101,32 +104,45 @@ class Pipeline:
                 setattr(self.status, k, getattr(self.status, k) + v)
 
     def _run(self, roots: list[str] | None, analyze: bool) -> None:
+        workers = _Workers(self.settings.workers)
         try:
-            with ThreadPoolExecutor(max_workers=self.settings.workers, thread_name_prefix="pixsift-work") as pool:
-                for root in roots or []:
-                    if self._cancel.is_set():
-                        break
-                    self._set(phase="scanning", current_root=root)
-                    self._scan_root(root, pool)
-                self._set(current_root=None)
-                if analyze and not self._cancel.is_set():
-                    self._set(phase="models")
+            analyzer = None
+            if analyze:
+                # Models first, so the scan can analyse each picture while it has it decoded (one read per file).
+                self._set(phase="models")
+                try:
                     self.models.ensure(self._cancel)
-                    if not self._cancel.is_set():
-                        self._analyze_pending()
-                if analyze and not self._cancel.is_set():
-                    self._set(phase="grouping")
-                    self._set(auto_named=face_ops.auto_assign(self.db))  # known people first...
-                    face_ops.recluster(self.db)                           # ...then group the rest
+                    if self._analyzer is not None or self.models.status()["ready"]:
+                        analyzer = self.analyzer()
+                except Exception as exc:  # offline? scan anyway; analysis catches up on a later run
+                    self._set(message=f"Couldn't download the AI models ({exc}); pictures will be analysed later.")
+            for root in roots or []:
+                if self._cancel.is_set():
+                    break
+                self._set(phase="scanning", current_root=root)
+                self._scan_root(root, workers, analyzer)
+            self._set(current_root=None)
+            if analyzer is not None and not self._cancel.is_set():
+                self._analyze_pending(workers, analyzer)  # leftovers: scanned earlier, models arrived later...
+            if analyze and not self._cancel.is_set():  # grouping needs only stored faces, not the models
+                self._set(phase="grouping")
+                self._set(auto_named=face_ops.auto_assign(self.db))  # known people first...
+                face_ops.recluster(self.db)                           # ...then group the rest
             final = "cancelled" if self._cancel.is_set() else "done"
         except Exception as exc:
             final = "error"
             self._set(message=f"{type(exc).__name__}: {exc}")
-        self._set(state=final, phase=None, current_root=None, finished_at=time.time())
+        finally:
+            workers.close()
+        try:
+            self.db.optimize()  # thousands of new rows: keep query plans good
+        except Exception:
+            pass
+        self._set(state=final, phase=None, current_root=None, current_file=None, finished_at=time.time())
 
     # ---- scanning ---------------------------------------------------------------------------------
 
-    def _scan_root(self, root: str, pool: ThreadPoolExecutor) -> None:
+    def _scan_root(self, root: str, workers: "_Workers", analyzer: Analyzer | None) -> None:
         s = self.settings
         if not os.path.isdir(root):
             # Unplugged drive (or folder gone): keep its pictures as they are instead of marking them deleted.
@@ -135,39 +151,54 @@ class Pipeline:
         volume = self.db.volume_for(root)
         volume_id = volume["id"] if volume else None
         known = self.db.known_files(root)
-        seen: set[str] = set()
-        pending, unchanged = [], []
-
-        def flush() -> None:
-            recs = list(pool.map(lambda a: process_file(*a, s.thumbs_dir, s.thumb_size), pending))
+        # Walk first (cheap: metadata only) so progress has a total and a time estimate.
+        files = list(iter_images(root, s.min_file_bytes))
+        seen = {f[0] for f in files}
+        unchanged = [f[0] for f in files if known.get(f[0]) == (f[1], f[2])]
+        todo = [f for f in files if known.get(f[0]) != (f[1], f[2])]
+        self._bump(found=len(files), unchanged=len(unchanged), to_scan=len(todo))
+        if self.status.scan_started is None:
+            self._set(scan_started=time.time())
+        batch = _ANALYZE_BATCH if analyzer is not None else _SCAN_BATCH
+        for start in range(0, len(todo), batch):
+            if self._cancel.is_set():
+                return
+            chunk = todo[start:start + batch]
+            self._set(current_file=chunk[0][0])
+            results = workers.map(lambda f: process_file(*f, s.thumbs_dir, s.thumb_size, analyzer), chunk)
+            recs = [r for r in results if r is not _TIMEOUT]
+            self._bump(timeouts=len(chunk) - len(recs))  # skipped now; retried on the next scan
             for r in recs:
                 r["volume_id"] = volume_id
             self.db.upsert_images(recs)
             self._bump(processed=len(recs), errors=sum(1 for r in recs if r["error"]))
-            pending.clear()
-
-        for path, size, mtime in iter_images(root, s.min_file_bytes):
-            if self._cancel.is_set():
-                return
-            seen.add(path)
-            self._bump(found=1)
-            if known.get(path) == (size, mtime):
-                unchanged.append(path)
-                continue
-            pending.append((path, size, mtime))
-            if len(pending) >= _SCAN_BATCH:
-                flush()
-        if pending:
-            flush()
+            self._store_analyses([r for r in recs if "_analysis" in r])
         self.db.touch_present(unchanged)
         gone = known.keys() - seen
         self.db.set_missing(gone)
-        self._bump(unchanged=len(unchanged), missing=len(gone))
+        self._bump(missing=len(gone))
         self.db.record_root(root, volume_id)
         if volume_id:
             self.db.execute("UPDATE volumes SET status='tracked', last_scanned=datetime('now') WHERE id=?", (volume_id,))
             self.db.execute("UPDATE images SET volume_id=? WHERE volume_id IS NULL AND path LIKE ? ESCAPE '\\'",
                             (volume_id, like_prefix(root)))  # pictures indexed before drive tracking existed
+
+    def _store_analyses(self, recs: list[dict]) -> None:
+        """Save analyses done during the scan (the rows now exist, so they have ids)."""
+        if not recs:
+            return
+        paths = [r["path"] for r in recs]
+        rows = {r["path"]: r for r in self.db.query(
+            f"SELECT id, path, edited_from FROM images WHERE path IN ({','.join('?' * len(paths))})", paths)}
+        for rec in recs:
+            row = rows.get(rec["path"])
+            if row is None:
+                continue
+            try:
+                apply_analysis(self.db, self.settings.thumbs_dir, row, rec["_analysis"])
+            except Exception as exc:  # one bad picture must never stop the job
+                self._record_failure(row, f"{type(exc).__name__}: {exc}")
+        self._bump(analyzed=len(recs))
 
     # ---- analysis ---------------------------------------------------------------------------------
 
@@ -185,16 +216,12 @@ class Pipeline:
         "AND (i.volume_id IS NULL OR EXISTS (SELECT 1 FROM volumes v WHERE v.id=i.volume_id AND v.mounted=1))"
     )
 
-    def _analyze_pending(self) -> None:
+    def _analyze_pending(self, workers: "_Workers", analyzer: Analyzer) -> None:
         total = self.db.query_one(f"SELECT COUNT(*) AS n FROM images i WHERE {self._PENDING_WHERE}")["n"]
-        self._set(phase="analyzing", to_analyze=total, analyzed=0, analyze_started=time.time())
-        if not total:
-            return
-        analyzer = self.analyzer()
-        # Own pool, never waited on after a hang: a stuck worker thread can't block the job from finishing.
-        pool = ThreadPoolExecutor(max_workers=self.settings.workers, thread_name_prefix="pixsift-analyze")
+        done = self.status.analyzed  # analysed during the scan already; keep counting from there
+        self._set(phase="analyzing", to_analyze=done + total, analyze_base=done, analyze_started=time.time())
         last_id = 0
-        while not self._cancel.is_set():
+        while total and not self._cancel.is_set():
             rows = self.db.query(
                 "SELECT i.id, i.path, i.filename, i.camera_make, i.edited_from FROM images i "
                 f"WHERE {self._PENDING_WHERE} AND i.id > ? ORDER BY i.id LIMIT ?", (last_id, _ANALYZE_BATCH))
@@ -202,30 +229,17 @@ class Pipeline:
                 break
             last_id = rows[-1]["id"]
             self._set(current_file=rows[0]["path"])
-            futures = [pool.submit(_safe_analyze, analyzer, r) for r in rows]
-            deadline = time.time() + ANALYZE_TIMEOUT
-            timed_out = False
-            for row, fut in zip(rows, futures):
-                try:
-                    result = fut.result(timeout=max(0.0, deadline - time.time()))
-                except FutureTimeout:
-                    # A picture hung the decoder/model (or its drive stopped responding). Skip it and carry on;
-                    # threads can't be killed, so the stuck one is abandoned and a fresh pool takes over.
-                    timed_out = True
+            for row, result in zip(rows, workers.map(lambda r: _safe_analyze(analyzer, r), rows)):
+                if result is _TIMEOUT:
+                    # A picture hung the decoder/model (or its drive stopped responding): skip it.
                     self._bump(timeouts=1)
                     self._record_failure(row, "analysis timed out")
-                    continue
-                if result is _SKIP:
-                    continue  # file not reachable right now (drive unplugged/asleep): retry on a later run
-                try:
-                    apply_analysis(self.db, self.settings.thumbs_dir, row, result)
-                except Exception as exc:  # one bad picture must never stop the whole job
-                    self._record_failure(row, f"{type(exc).__name__}: {exc}")
+                elif result is not _SKIP:  # _SKIP: file unreachable right now; retried on a later run
+                    try:
+                        apply_analysis(self.db, self.settings.thumbs_dir, row, result)
+                    except Exception as exc:  # one bad picture must never stop the whole job
+                        self._record_failure(row, f"{type(exc).__name__}: {exc}")
             self._bump(analyzed=len(rows))
-            if timed_out:
-                pool.shutdown(wait=False, cancel_futures=True)
-                pool = ThreadPoolExecutor(max_workers=self.settings.workers, thread_name_prefix="pixsift-analyze")
-        pool.shutdown(wait=not self.status.timeouts, cancel_futures=True)
         self._set(current_file=None)
 
     def _record_failure(self, row: dict, message: str) -> None:
@@ -243,7 +257,38 @@ class Pipeline:
                 apply_analysis(self.db, self.settings.thumbs_dir, row, result)
 
 
-_SKIP = object()  # "couldn't reach the file right now": leave it pending
+_SKIP = object()     # "couldn't reach the file right now": leave it pending
+_TIMEOUT = object()  # task didn't finish before the deadline
+
+
+class _Workers:
+    """Thread pool that survives stuck tasks. Pictures run in parallel; if a batch doesn't finish before the
+    deadline (a file that hangs the decoder, a drive that stopped responding), the stuck tasks are given up
+    on and a fresh pool takes over. Threads can't be killed, so a stuck one is simply abandoned."""
+
+    def __init__(self, n: int):
+        self.n = n
+        self.pool = ThreadPoolExecutor(max_workers=n, thread_name_prefix="pixsift-work")
+        self.abandoned = False
+
+    def map(self, fn, items: list) -> list:
+        futures = [self.pool.submit(fn, item) for item in items]
+        deadline = time.time() + ANALYZE_TIMEOUT
+        out, stuck = [], False
+        for fut in futures:
+            try:
+                out.append(fut.result(timeout=max(0.0, deadline - time.time())))
+            except FutureTimeout:
+                out.append(_TIMEOUT)
+                stuck = True
+        if stuck:
+            self.pool.shutdown(wait=False, cancel_futures=True)
+            self.pool = ThreadPoolExecutor(max_workers=self.n, thread_name_prefix="pixsift-work")
+            self.abandoned = True
+        return out
+
+    def close(self) -> None:
+        self.pool.shutdown(wait=not self.abandoned, cancel_futures=True)
 
 
 def _safe_analyze(analyzer: Analyzer, row: dict) -> AnalysisResult | None | object:
