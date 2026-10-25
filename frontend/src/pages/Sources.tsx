@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, formatBytes, formatDate, pickFolders, type Drive } from '../api'
+import { analysisEta, api, formatBytes, formatDate, pickFolders, type Drive } from '../api'
 import { Icon } from '../components/Icon'
 import { useJob } from '../hooks/job'
 
@@ -142,7 +142,13 @@ export function Sources() {
           <h2>{running ? phaseLabel(job.phase) : `Last run: ${job.state}`}</h2>
           {job.current_root && <p className="muted small path">{job.current_root}</p>}
           {job.phase === 'analyzing' && job.to_analyze > 0 && (
-            <progress value={job.analyzed} max={job.to_analyze} />
+            <>
+              <progress value={job.analyzed} max={job.to_analyze} />
+              <p className="muted small">
+                {(() => { const eta = analysisEta(job); return eta ? `${eta.rate.toFixed(1)} pictures/s · ${eta.left} left` : 'Starting…' })()}
+                {job.current_file && <><br />Now: <span className="path">{job.current_file}</span></>}
+              </p>
+            </>
           )}
           {job.phase === 'models' && m && m.missing_bytes > 0 && (
             <progress value={m.downloaded_bytes} max={m.missing_bytes} />
@@ -154,6 +160,7 @@ export function Sources() {
             <dt>Analysed</dt><dd>{job.analyzed.toLocaleString()}{job.to_analyze ? ` of ${job.to_analyze.toLocaleString()}` : ''}</dd>
             <dt>Unreadable</dt><dd>{job.errors.toLocaleString()}</dd>
             <dt>No longer on disk</dt><dd>{job.missing.toLocaleString()}</dd>
+            {job.timeouts > 0 && (<><dt>Skipped (took too long)</dt><dd>{job.timeouts}</dd></>)}
             {job.offline_roots > 0 && (<><dt>Skipped (drive not connected)</dt><dd>{job.offline_roots}</dd></>)}
           </dl>
           {job.message && <p className="error">{job.message}</p>}

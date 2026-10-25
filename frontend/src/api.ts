@@ -116,6 +116,9 @@ export interface JobStatus {
   offline_roots: number
   to_analyze: number
   analyzed: number
+  analyze_started: number | null
+  current_file: string | null
+  timeouts: number
   finished_at: number | null
   message: string | null
   models: ModelStatus
@@ -284,6 +287,15 @@ export const CATEGORY_LABELS: Record<CategoryFilter, string> = {
   screenshot: 'Screenshots',
   graphic: 'Graphics',
   unsorted: 'Not analysed yet',
+}
+
+/** Speed and time left for the analysis phase, e.g. { rate: 12.3, left: "about 25 min" }. */
+export function analysisEta(job: JobStatus | null): { rate: number; left: string } | null {
+  if (!job || job.phase !== 'analyzing' || !job.analyze_started || job.analyzed < 32) return null
+  const rate = job.analyzed / Math.max(1, Date.now() / 1000 - job.analyze_started)
+  const secs = (job.to_analyze - job.analyzed) / rate
+  const left = secs < 90 ? 'about a minute' : secs < 5400 ? `about ${Math.round(secs / 60)} min` : `about ${(secs / 3600).toFixed(1)} h`
+  return { rate, left }
 }
 
 export const formatBytes = (n: number) => {

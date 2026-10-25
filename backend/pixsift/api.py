@@ -75,6 +75,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(_app: FastAPI):
         if settings.watch_drives:
             watcher.start()
+        # Resume analysis that was interrupted (app quit, laptop slept, drive unplugged) without waiting
+        # for the next scan.
+        if pipeline.models.status()["ready"] and db.query_one(
+            f"SELECT 1 FROM images i WHERE {Pipeline._PENDING_WHERE} LIMIT 1"
+        ):
+            pipeline.start(None)
         yield
         watcher.stop()
 

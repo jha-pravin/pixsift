@@ -79,7 +79,7 @@ def face_suggestion(face_id: int, db: Database = Depends(get_db)):
 def assign(req: AssignRequest, db: Database = Depends(get_db)):
     person_id = req.resolve(db)
     face_ops.assign_faces(db, req.face_ids, person_id)
-    auto = face_ops.auto_assign(db) if person_id else 0  # find this person's other photos right away
+    auto = face_ops.auto_assign(db, person_id) if person_id else 0  # find this person's other photos right away
     return {"person_id": person_id, "auto_named": auto}
 
 
@@ -92,7 +92,7 @@ def reject(face_id: int, db: Database = Depends(get_db)):
 @router.post("/faces/{face_id}/hide", dependencies=MUTATING)
 def hide_face(face_id: int, db: Database = Depends(get_db)):
     person_id = face_ops.hide_faces(db, [face_id])
-    face_ops.auto_assign(db)
+    face_ops.auto_assign(db, person_id)
     return {"person_id": person_id}
 
 
@@ -123,13 +123,13 @@ def name_group(cluster_id: int, req: NameTarget, db: Database = Depends(get_db))
         raise HTTPException(400, "use ignore to dismiss a group")
     person_id = req.resolve(db)
     face_ops.assign_faces(db, _group_face_ids(db, cluster_id), person_id)
-    return {"person_id": person_id, "auto_named": face_ops.auto_assign(db)}
+    return {"person_id": person_id, "auto_named": face_ops.auto_assign(db, person_id)}
 
 
 @router.post("/face-groups/{cluster_id}/hide", dependencies=MUTATING)
 def hide_group(cluster_id: int, db: Database = Depends(get_db)):
     person_id = face_ops.hide_faces(db, _group_face_ids(db, cluster_id))
-    face_ops.auto_assign(db)  # quietly collect this person's other photos too
+    face_ops.auto_assign(db, person_id)  # quietly collect this person's other photos too
     return {"person_id": person_id}
 
 
@@ -200,7 +200,7 @@ def person_faces(person_id: int, db: Database = Depends(get_db),
 @router.post("/persons/{person_id}/confirm-auto", dependencies=MUTATING)
 def confirm_auto(person_id: int, req: ConfirmRequest, db: Database = Depends(get_db)):
     face_ops.confirm_auto(db, person_id, req.face_ids)
-    return {"auto_named": face_ops.auto_assign(db)}  # more confirmed faces can recognise more photos
+    return {"auto_named": face_ops.auto_assign(db, person_id)}  # more confirmed faces can recognise more photos
 
 
 @router.post("/persons/{person_id}/unhide", dependencies=MUTATING)

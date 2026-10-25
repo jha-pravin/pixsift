@@ -8,6 +8,7 @@ import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from .scanner import iter_images
 
 _SCAN_BATCH = 200
 _ANALYZE_BATCH = 32
+ANALYZE_TIMEOUT = 120.0  # seconds per batch before stuck pictures are skipped
 
 
 @dataclass
@@ -37,6 +39,9 @@ class JobStatus:
     offline_roots: int = 0  # folders skipped because their drive isn't connected
     to_analyze: int = 0
     analyzed: int = 0
+    analyze_started: float | None = None
+    current_file: str | None = None
+    timeouts: int = 0  # pictures skipped because analysis hung
     auto_named: int = 0
     started_at: float | None = None
     finished_at: float | None = None
@@ -108,7 +113,7 @@ class Pipeline:
                     self._set(phase="models")
                     self.models.ensure(self._cancel)
                     if not self._cancel.is_set():
-                        self._analyze_pending(pool)
+                        self._analyze_pending()
                 if analyze and not self._cancel.is_set():
                     self._set(phase="grouping")
                     self._set(auto_named=face_ops.auto_assign(self.db))  # known people first...
@@ -170,31 +175,62 @@ class Pipeline:
         with self._analyzer_lock:
             if self._analyzer is None:
                 self.models.ensure()
-                self._analyzer = Analyzer(self.models, threads=2)
+                # One thread per inference: the pipeline already analyses several pictures in parallel.
+                self._analyzer = Analyzer(self.models, threads=1)
             return self._analyzer
 
-    _PENDING_SQL = (
-        "SELECT id, path, filename, camera_make, edited_from FROM images "
-        "WHERE analyzed_at IS NULL AND missing=0 AND thumb IS NOT NULL AND id > ? ORDER BY id LIMIT ?"
+    # Pictures waiting for analysis, skipping those on drives that aren't connected (they wait for the drive).
+    _PENDING_WHERE = (
+        "i.analyzed_at IS NULL AND i.missing=0 AND i.thumb IS NOT NULL "
+        "AND (i.volume_id IS NULL OR EXISTS (SELECT 1 FROM volumes v WHERE v.id=i.volume_id AND v.mounted=1))"
     )
 
-    def _analyze_pending(self, pool: ThreadPoolExecutor) -> None:
-        total = self.db.query_one(
-            "SELECT COUNT(*) AS n FROM images WHERE analyzed_at IS NULL AND missing=0 AND thumb IS NOT NULL"
-        )["n"]
-        self._set(phase="analyzing", to_analyze=total, analyzed=0)
+    def _analyze_pending(self) -> None:
+        total = self.db.query_one(f"SELECT COUNT(*) AS n FROM images i WHERE {self._PENDING_WHERE}")["n"]
+        self._set(phase="analyzing", to_analyze=total, analyzed=0, analyze_started=time.time())
         if not total:
             return
         analyzer = self.analyzer()
+        # Own pool, never waited on after a hang: a stuck worker thread can't block the job from finishing.
+        pool = ThreadPoolExecutor(max_workers=self.settings.workers, thread_name_prefix="pixsift-analyze")
         last_id = 0
         while not self._cancel.is_set():
-            rows = self.db.query(self._PENDING_SQL, (last_id, _ANALYZE_BATCH))
+            rows = self.db.query(
+                "SELECT i.id, i.path, i.filename, i.camera_make, i.edited_from FROM images i "
+                f"WHERE {self._PENDING_WHERE} AND i.id > ? ORDER BY i.id LIMIT ?", (last_id, _ANALYZE_BATCH))
             if not rows:
                 break
             last_id = rows[-1]["id"]
-            for row, result in zip(rows, pool.map(lambda r: _safe_analyze(analyzer, r), rows)):
-                apply_analysis(self.db, self.settings.thumbs_dir, row, result)
+            self._set(current_file=rows[0]["path"])
+            futures = [pool.submit(_safe_analyze, analyzer, r) for r in rows]
+            deadline = time.time() + ANALYZE_TIMEOUT
+            timed_out = False
+            for row, fut in zip(rows, futures):
+                try:
+                    result = fut.result(timeout=max(0.0, deadline - time.time()))
+                except FutureTimeout:
+                    # A picture hung the decoder/model (or its drive stopped responding). Skip it and carry on;
+                    # threads can't be killed, so the stuck one is abandoned and a fresh pool takes over.
+                    timed_out = True
+                    self._bump(timeouts=1)
+                    self._record_failure(row, "analysis timed out")
+                    continue
+                if result is _SKIP:
+                    continue  # file not reachable right now (drive unplugged/asleep): retry on a later run
+                try:
+                    apply_analysis(self.db, self.settings.thumbs_dir, row, result)
+                except Exception as exc:  # one bad picture must never stop the whole job
+                    self._record_failure(row, f"{type(exc).__name__}: {exc}")
             self._bump(analyzed=len(rows))
+            if timed_out:
+                pool.shutdown(wait=False, cancel_futures=True)
+                pool = ThreadPoolExecutor(max_workers=self.settings.workers, thread_name_prefix="pixsift-analyze")
+        pool.shutdown(wait=not self.status.timeouts, cancel_futures=True)
+        self._set(current_file=None)
+
+    def _record_failure(self, row: dict, message: str) -> None:
+        self.db.execute("UPDATE images SET analyzed_at=datetime('now'), error=COALESCE(error, ?) WHERE id=?",
+                        (message[:500], row["id"]))
 
     def analyze_now(self, image_id: int) -> None:
         """Synchronous re-analysis of one picture (after an edit)."""
@@ -202,14 +238,23 @@ class Pipeline:
             "SELECT id, path, filename, camera_make, edited_from FROM images WHERE id=?", (image_id,)
         )
         if row:
-            apply_analysis(self.db, self.settings.thumbs_dir, row, _safe_analyze(self.analyzer(), row))
+            result = _safe_analyze(self.analyzer(), row)
+            if result is not _SKIP:
+                apply_analysis(self.db, self.settings.thumbs_dir, row, result)
 
 
-def _safe_analyze(analyzer: Analyzer, row: dict) -> AnalysisResult | None:
+_SKIP = object()  # "couldn't reach the file right now": leave it pending
+
+
+def _safe_analyze(analyzer: Analyzer, row: dict) -> AnalysisResult | None | object:
+    if not os.path.exists(row["path"]):
+        return _SKIP
     try:
         return analyzer.analyze(row["path"], filename=row["filename"], camera=bool(row["camera_make"]))
     except Exception:
-        return None  # unreadable now (moved/corrupt); recorded as analysed so it isn't retried forever
+        if not os.path.exists(row["path"]):
+            return _SKIP  # the drive went away mid-read
+        return None  # corrupt/unsupported: recorded as analysed so it isn't retried forever
 
 
 def apply_analysis(db: Database, thumbs_dir: Path, row: dict, result: AnalysisResult | None) -> None:

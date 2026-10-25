@@ -71,16 +71,23 @@ export function InfoPanel({ img, onChanged, onFace }: Props) {
         <ul className="face-list">
           {faces.map((f) => (
             <li key={f.id}>
-              <button className="face-chip" onClick={() => onFace(f)} aria-label={f.person_name ? `${f.person_name}: rename or remove` : 'Name this face'}>
-                <img src={api.faceUrl(f.id)} alt="" className="face-avatar" />
-                <span>{f.person_hidden ? <em className="muted">Hidden person</em> : f.person_name ?? <em className="muted">Name…</em>}</span>
-                {f.assigned_by === 'auto' && !f.person_hidden && <span className="auto-tag" title="Recognised automatically. Click to confirm">auto</span>}
-              </button>
-              {f.person_id && !f.person_hidden && (
-                <Link to={`/people/${f.person_id}`} className="small" aria-label={`All pictures of ${f.person_name}`}>
-                  All
+              {f.person_id && !f.person_hidden ? (
+                // A named person: the name opens all their photos; the pencil fixes this face.
+                <Link to={`/people/${f.person_id}`} className="face-chip" title={`All photos of ${f.person_name}`}>
+                  <img src={api.faceUrl(f.id)} alt="" className="face-avatar" />
+                  <span>{f.person_name}</span>
+                  {f.assigned_by === 'auto' && <span className="auto-tag" title="Recognised automatically">auto</span>}
                 </Link>
+              ) : (
+                <button className="face-chip" onClick={() => onFace(f)} aria-label={f.person_hidden ? 'Hidden person' : 'Name this face'}>
+                  <img src={api.faceUrl(f.id)} alt="" className="face-avatar" />
+                  <span><em className="muted">{f.person_hidden ? 'Hidden person' : 'Name…'}</em></span>
+                </button>
               )}
+              <button className="icon-btn" onClick={() => onFace(f)} title="Rename, confirm or correct this face"
+                aria-label={`Edit face${f.person_name ? ` (${f.person_name})` : ''}`}>
+                <Icon name="edit" size={15} />
+              </button>
             </li>
           ))}
         </ul>

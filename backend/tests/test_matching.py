@@ -125,3 +125,15 @@ def test_a_single_unnamed_person_still_forms_a_group(lib):
     groups = F.unnamed_groups(lib.db)
     assert len(groups) == 1 and {f["id"] for f in groups[0]["faces"]} == set(ids)
     assert stranger not in {f["id"] for f in groups[0]["faces"]}
+
+
+def test_targeted_auto_assign_matches_the_full_run(lib):
+    a, b = lib.person("A"), lib.person("B")
+    lib.face(vec((0, 1)), 2020, a)
+    lib.face(vec((1, 1)), 2020, b)
+    near_a = lib.face(vec((0, 1), (9, 0.3)))
+    near_b = lib.face(vec((1, 1), (9, 0.3)))
+    assert F.auto_assign(lib.db, a) == 1  # only A's candidates
+    assert lib.owner(near_a) == (a, "auto") and lib.owner(near_b) == (None, None)
+    assert F.auto_assign(lib.db) == 1      # the full run finds the rest
+    assert lib.owner(near_b) == (b, "auto")

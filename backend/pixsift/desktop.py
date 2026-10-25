@@ -1,6 +1,7 @@
 """Desktop app: runs the engine on a private localhost port and shows the UI in a native window
 (WKWebView on macOS, WebView2 on Windows)."""
 
+import os
 import socket
 import sys
 import threading
@@ -92,6 +93,9 @@ def main() -> None:
     webview.start(private_mode=False)  # keep localStorage (viewer preferences) between launches
     server.should_exit = True
     thread.join(timeout=5)
+    # Exit even if an analysis thread is stuck on a bad file or a sleeping drive (Python would wait for it).
+    # Everything is already committed to SQLite.
+    os._exit(0)
 
 
 if __name__ == "__main__":

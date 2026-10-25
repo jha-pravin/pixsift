@@ -9,11 +9,14 @@ import cv2
 import numpy as np
 import onnxruntime as ort
 from PIL import Image, ImageOps
+from pillow_heif import register_heif_opener
 from tokenizers import Tokenizer
 
 from .models import ModelStore
 
 cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
+cv2.setNumThreads(1)  # pictures are analysed in parallel already; nested OpenCV threads only oversubscribe the CPU
+register_heif_opener()  # HEIC/HEIF (iPhone photos)
 
 ANALYSIS_MAX_SIDE = 1280
 FACE_SCORE_MIN = 0.85

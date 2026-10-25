@@ -116,67 +116,72 @@ export function Person() {
         </section>
       )}
 
-      <section className="person-facts">
-        {p.years.length > 0 && (
-          <div className="fact">
-            <h3>By year</h3>
-            <div className="years">
-              {p.years.map((y) => (
-                <button key={y.year} className={`year ${year === y.year ? 'on' : ''}`} onClick={() => setYear(year === y.year ? null : y.year)}
-                  title={`${y.count} in ${y.year}`}>
-                  <span className="bar" style={{ height: `${(y.count / maxYear) * 100}%` }} />
-                  <span className="small">{y.year}</span>
-                </button>
-              ))}
+      <div className="person-body">
+        <section className="person-timeline">
+          <div className="section-head">
+            <h2>{year ? <>Photos from {year}</> : <>All photos</>} <span className="muted">· {total.toLocaleString()}</span></h2>
+            {year && <button className="link small" onClick={() => setYear(null)}>Show all years</button>}
+            <select className="push" aria-label="Order" value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
+              <option value="taken_desc">Newest first</option>
+              <option value="taken_asc">Oldest first</option>
+            </select>
+          </div>
+          {loaded && <PhotoGrid items={items} total={total} loadMore={loadMore} onOpen={setView} groupByMonth />}
+        </section>
+        <aside className="person-facts" aria-label={`About ${p.name}`}>
+          {p.years.length > 0 && (
+            <div className="fact">
+              <h3>By year</h3>
+              <div className="years">
+                {p.years.map((y) => (
+                  <button key={y.year} className={`year ${year === y.year ? 'on' : ''}`} onClick={() => setYear(year === y.year ? null : y.year)}
+                    title={`${y.count} in ${y.year}`}>
+                    <span className="bar" style={{ height: `${(y.count / maxYear) * 100}%` }} />
+                    <span className="small">{y.year}</span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
-        {p.together.length > 0 && (
+          )}
+          {p.together.length > 0 && (
+            <div className="fact">
+              <h3>Often with</h3>
+              <ul className="plain">
+                {p.together.map((t) => (
+                  <li key={t.id}>
+                    <Link to={`/people/${t.id}`}>{t.name}</Link>{' '}
+                    <Link className="muted small" to={`/library?person=${id}&person=${t.id}`}>{t.count} together</Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {p.cameras.length > 0 && (
+            <div className="fact">
+              <h3>Cameras</h3>
+              <ul className="plain">{p.cameras.map((c) => <li key={c.camera}>{c.camera} <span className="muted small">{c.count}</span></li>)}</ul>
+            </div>
+          )}
           <div className="fact">
-            <h3>Often with</h3>
+            <h3>Folders</h3>
             <ul className="plain">
-              {p.together.map((t) => (
-                <li key={t.id}>
-                  <Link to={`/people/${t.id}`}>{t.name}</Link>{' '}
-                  <Link className="muted small" to={`/library?person=${id}&person=${t.id}`}>{t.count} together</Link>
-                </li>
+              {p.folders.map((f) => (
+                <li key={f.folder}><Link to={`/library?person=${id}&folder=${encodeURIComponent(f.folder)}`} className="path">{f.folder}</Link> <span className="muted small">{f.count}</span></li>
               ))}
             </ul>
           </div>
-        )}
-        {p.cameras.length > 0 && (
-          <div className="fact">
-            <h3>Cameras</h3>
-            <ul className="plain">{p.cameras.map((c) => <li key={c.camera}>{c.camera} <span className="muted small">{c.count}</span></li>)}</ul>
-          </div>
-        )}
-        <div className="fact">
-          <h3>Folders</h3>
-          <ul className="plain">
-            {p.folders.map((f) => (
-              <li key={f.folder}><Link to={`/library?person=${id}&folder=${encodeURIComponent(f.folder)}`} className="path">{f.folder}</Link> <span className="muted small">{f.count}</span></li>
-            ))}
-          </ul>
-        </div>
-        {p.places.length > 0 && (
-          <div className="fact">
-            <h3>Places</h3>
-            <p className="small">{p.places.length} pictures have a location.</p>
-            <ul className="plain small">
-              {p.places.slice(0, 4).map((pl) => <li key={pl.id}>{pl.lat.toFixed(3)}, {pl.lon.toFixed(3)} <span className="muted">{formatDate(pl.taken_at, false)}</span></li>)}
-            </ul>
-          </div>
-        )}
-      </section>
+          {p.places.length > 0 && (
+            <div className="fact">
+              <h3>Places</h3>
+              <p className="small">{p.places.length} pictures have a location.</p>
+              <ul className="plain small">
+                {p.places.slice(0, 4).map((pl) => <li key={pl.id}>{pl.lat.toFixed(3)}, {pl.lon.toFixed(3)} <span className="muted">{formatDate(pl.taken_at, false)}</span></li>)}
+              </ul>
+            </div>
+          )}
+        </aside>
 
-      <div className="section-head">
-        <h2>Timeline {year && <span className="muted">· {year}</span>}</h2>
-        <select aria-label="Order" value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
-          <option value="taken_desc">Newest first</option>
-          <option value="taken_asc">Oldest first</option>
-        </select>
       </div>
-      {loaded && <PhotoGrid items={items} total={total} loadMore={loadMore} onOpen={setView} groupByMonth />}
       {view !== null && items[view] && (
         <Viewer items={items} total={total} index={view} loadMore={loadMore} onIndex={setView} onClose={() => setView(null)} />
       )}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api, type Face, type NameTarget, type Suggestion } from '../api'
 import { NameInput, people } from './NameInput'
 import { Icon } from './Icon'
@@ -40,6 +41,9 @@ export function FaceTag({ face, onDone, onClose }: Props) {
         </div>
         <button className="icon-btn" aria-label="Close" onClick={onClose}><Icon name="close" /></button>
       </div>
+      {face.person_id && !hidden && (
+        <Link to={`/people/${face.person_id}`} className="button primary">See all photos of {face.person_name} →</Link>
+      )}
       {face.assigned_by === 'auto' && face.person_id && !hidden && (
         <button className="suggestion" onClick={() => run(api.confirmAuto(face.person_id!, [face.id]))}>
           <Icon name="check" size={16} /> Yes, this is <strong>{face.person_name}</strong>
