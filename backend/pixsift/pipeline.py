@@ -4,6 +4,7 @@ One job runs at a time. Every phase is incremental, so re-running only does the 
 """
 
 import json
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -13,7 +14,7 @@ from pathlib import Path
 from . import faces as face_ops
 from .analyzer import AnalysisResult, Analyzer, save_crop
 from .config import Settings
-from .db import Database
+from .db import Database, like_prefix
 from .media import process_file
 from .models import ModelStore
 from .scanner import iter_images
@@ -33,6 +34,7 @@ class JobStatus:
     unchanged: int = 0
     errors: int = 0
     missing: int = 0
+    offline_roots: int = 0  # folders skipped because their drive isn't connected
     to_analyze: int = 0
     analyzed: int = 0
     auto_named: int = 0
@@ -57,7 +59,9 @@ class Pipeline:
 
     def snapshot(self) -> dict:
         with self._lock:
-            return {**asdict(self.status), "models": self.models.status()}
+            status = asdict(self.status)
+        new_drives = self.db.query("SELECT id, label, mount FROM volumes WHERE mounted=1 AND status='new'")
+        return {**status, "models": self.models.status(), "new_drives": new_drives}
 
     @property
     def running(self) -> bool:
@@ -119,12 +123,20 @@ class Pipeline:
 
     def _scan_root(self, root: str, pool: ThreadPoolExecutor) -> None:
         s = self.settings
+        if not os.path.isdir(root):
+            # Unplugged drive (or folder gone): keep its pictures as they are instead of marking them deleted.
+            self._bump(offline_roots=1)
+            return
+        volume = self.db.volume_for(root)
+        volume_id = volume["id"] if volume else None
         known = self.db.known_files(root)
         seen: set[str] = set()
         pending, unchanged = [], []
 
         def flush() -> None:
             recs = list(pool.map(lambda a: process_file(*a, s.thumbs_dir, s.thumb_size), pending))
+            for r in recs:
+                r["volume_id"] = volume_id
             self.db.upsert_images(recs)
             self._bump(processed=len(recs), errors=sum(1 for r in recs if r["error"]))
             pending.clear()
@@ -146,7 +158,11 @@ class Pipeline:
         gone = known.keys() - seen
         self.db.set_missing(gone)
         self._bump(unchanged=len(unchanged), missing=len(gone))
-        self.db.record_root(root)
+        self.db.record_root(root, volume_id)
+        if volume_id:
+            self.db.execute("UPDATE volumes SET status='tracked', last_scanned=datetime('now') WHERE id=?", (volume_id,))
+            self.db.execute("UPDATE images SET volume_id=? WHERE volume_id IS NULL AND path LIKE ? ESCAPE '\\'",
+                            (volume_id, like_prefix(root)))  # pictures indexed before drive tracking existed
 
     # ---- analysis ---------------------------------------------------------------------------------
 

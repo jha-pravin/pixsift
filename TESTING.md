@@ -45,6 +45,10 @@ If macOS instead says the app is "damaged", open Terminal and run
 6. **Edit**: press **E** in the viewer. Rotate, crop and change brightness, then **Save**. A new
    `…_edited` copy should appear next to the original, and the original should be unchanged.
 7. **Library filters**: filter by type, person (try two people together), folder and month range.
+8. **External drive** (if you have one): plug it in, then answer "Find pictures on it?" with **Scan drive**.
+   Unplug it: its pictures should stay visible, marked as on that drive. Plug it in again: new pictures are found.
+9. **Hide person**: on People, hide someone you don't want to tag. They should disappear from the questions and
+   appear under **Hidden people**, where you can name them later.
 
 ## 3. Tell us how it went
 

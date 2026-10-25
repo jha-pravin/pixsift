@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, formatBytes, formatDate, pickFolders } from '../api'
+import { api, formatBytes, formatDate, pickFolders, type Drive } from '../api'
 import { Icon } from '../components/Icon'
 import { useJob } from '../hooks/job'
 
@@ -11,8 +11,10 @@ export function Sources() {
   const [input, setInput] = useState('')
   const [native, setNative] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [drives, setDrives] = useState<Drive[]>([])
 
   useEffect(() => {
+    api.drives().then(setDrives)
     Promise.all([api.roots(), api.suggestedRoots()]).then(([known, sugg]) => {
       setScanned(Object.fromEntries(known.map((r) => [r.path, r.last_scanned])))
       setRoots((cur) => cur.length ? cur : known.length ? known.map((r) => r.path) : sugg.filter((s) => s.label === 'Pictures').map((s) => s.path))
@@ -23,7 +25,7 @@ export function Sources() {
     check()
     window.addEventListener('pywebviewready', check)
     return () => window.removeEventListener('pywebviewready', check)
-  }, [version])
+  }, [version, job?.new_drives?.length])
 
   /** Add one or more paths (typed or pasted one per line), skipping duplicates. */
   const add = (...paths: string[]) => {
@@ -96,6 +98,45 @@ export function Sources() {
         {error && <p className="error">{error}</p>}
       </section>
 
+      {drives.length > 0 && (
+        <section className="card">
+          <h2>External drives</h2>
+          <p className="muted small">Pictures on a drive stay in your library while it's unplugged. Their people and timelines
+            still show them, marked with the drive's name. Plug the drive in to open or edit them; new pictures are found automatically.</p>
+          <ul className="drives">
+            {drives.map((d) => (
+              <li key={d.id}>
+                <Icon name="drive" />
+                <div className="root-text">
+                  <strong>{d.label}</strong>
+                  <span className="muted small">
+                    {d.mounted ? 'Connected' : 'Not connected'}
+                    {d.status === 'tracked' && ` · ${d.pictures.toLocaleString()} pictures`}
+                    {d.last_scanned && ` · scanned ${formatDate(d.last_scanned + 'Z')}`}
+                    {d.status === 'ignored' && ' · ignored'}
+                  </span>
+                </div>
+                {d.status === 'tracked' ? (
+                  <>
+                    <label className="check small">
+                      <input type="checkbox" checked={!!d.auto_scan}
+                        onChange={(e) => api.setDriveAutoScan(d.id, e.target.checked).then(() => api.drives().then(setDrives))} />
+                      Scan when connected
+                    </label>
+                    <button disabled={!d.mounted || running} onClick={() => run(api.scanDrive(d.id))}>Scan now</button>
+                  </>
+                ) : d.mounted ? (
+                  <>
+                    <button className="primary" disabled={running} onClick={() => run(api.scanDrive(d.id))}>Scan drive</button>
+                    {d.status === 'new' && <button onClick={() => run(api.ignoreDrive(d.id).then(() => api.drives().then(setDrives)))}>Not this drive</button>}
+                  </>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {job && job.state !== 'idle' && (
         <section className="card">
           <h2>{running ? phaseLabel(job.phase) : `Last run: ${job.state}`}</h2>
@@ -113,6 +154,7 @@ export function Sources() {
             <dt>Analysed</dt><dd>{job.analyzed.toLocaleString()}{job.to_analyze ? ` of ${job.to_analyze.toLocaleString()}` : ''}</dd>
             <dt>Unreadable</dt><dd>{job.errors.toLocaleString()}</dd>
             <dt>No longer on disk</dt><dd>{job.missing.toLocaleString()}</dd>
+            {job.offline_roots > 0 && (<><dt>Skipped (drive not connected)</dt><dd>{job.offline_roots}</dd></>)}
           </dl>
           {job.message && <p className="error">{job.message}</p>}
         </section>

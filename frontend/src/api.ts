@@ -18,6 +18,9 @@ export interface ImageItem {
   category: Category | null
   face_count: number
   camera_model: string | null
+  volume_id: number | null
+  offline: number
+  drive: string | null
 }
 
 export interface Face {
@@ -31,6 +34,7 @@ export interface Face {
   cluster_id: number | null
   ignored: number
   assigned_by: 'user' | 'carry' | 'auto' | null
+  person_hidden: number
 }
 
 export interface ImageDetail extends ImageItem {
@@ -67,6 +71,7 @@ export interface ImageQuery {
   date_from?: string
   date_to?: string
   duplicates?: boolean
+  drive?: number
   sort?: Sort
 }
 
@@ -79,6 +84,7 @@ export interface Stats {
   people: number
   unnamed_groups: number
   auto_named: number
+  drives: number
   duplicate_groups: number
   duplicate_files: number
 }
@@ -107,16 +113,31 @@ export interface JobStatus {
   unchanged: number
   errors: number
   missing: number
+  offline_roots: number
   to_analyze: number
   analyzed: number
   finished_at: number | null
   message: string | null
   models: ModelStatus
+  new_drives: { id: number; label: string; mount: string }[]
+}
+
+export interface Drive {
+  id: number
+  label: string
+  mount: string
+  mounted: number
+  status: 'new' | 'tracked' | 'ignored'
+  auto_scan: number
+  last_seen: string | null
+  last_scanned: string | null
+  pictures: number
 }
 
 export interface Person {
   id: number
   name: string
+  hidden: number
   cover_face_id: number | null
   count: number
   auto_count: number
@@ -135,6 +156,7 @@ export interface PersonDetail extends Person {
 export interface Suggestion {
   person_id: number
   name: string
+  hidden?: boolean
   similarity: number
 }
 
@@ -221,6 +243,16 @@ export const api = {
   edit: (id: number, req: EditRequest) => send<{ id: number; path: string; copy: boolean }>('POST', `/api/images/${id}/edit`, req),
 
   persons: (sort: 'count' | 'name' = 'count') => request<Person[]>(`/api/persons?sort=${sort}`),
+  hiddenPersons: () => request<Person[]>('/api/persons?hidden=true'),
+  unhidePerson: (id: number, name?: string) => send<{ person_id: number | null }>('POST', `/api/persons/${id}/unhide`, { name: name ?? null }),
+  hideGroup: (clusterId: number) => send<{ person_id: number }>('POST', `/api/face-groups/${clusterId}/hide`),
+  hideFace: (faceId: number) => send<{ person_id: number }>('POST', `/api/faces/${faceId}/hide`),
+  settings: () => request<{ ask_min_photos: number }>('/api/settings'),
+  saveSettings: (s: { ask_min_photos: number }) => send<{ ask_min_photos: number }>('PUT', '/api/settings', s),
+  drives: () => request<Drive[]>('/api/drives'),
+  scanDrive: (id: number) => send<JobStatus>('POST', `/api/drives/${id}/scan`),
+  ignoreDrive: (id: number) => send('POST', `/api/drives/${id}/ignore`),
+  setDriveAutoScan: (id: number, auto_scan: boolean) => send('PATCH', `/api/drives/${id}`, { auto_scan }),
   person: (id: number) => request<PersonDetail>(`/api/persons/${id}`),
   personFaces: (id: number) => request<{ id: number; image_id: number; assigned_by: string }[]>(`/api/persons/${id}/faces`),
   confirmAuto: (id: number, faceIds?: number[]) =>

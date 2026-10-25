@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, type FaceGroup, type Person } from '../api'
+import { api, type FaceGroup, type NameTarget, type Person } from '../api'
 import { Icon } from '../components/Icon'
 import { NameInput, people as peopleCache } from '../components/NameInput'
 import { useJob } from '../hooks/job'
@@ -12,11 +12,30 @@ export function People() {
   const [filter, setFilter] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [found, setFound] = useState<string | null>(null)
+  const [hidden, setHidden] = useState<Person[]>([])
+  const [askMin, setAskMin] = useState(2)
 
   useEffect(() => {
     api.persons().then(setPersons)
     api.faceGroups().then(setGroups)
+    api.hiddenPersons().then(setHidden)
+    api.settings().then((s) => setAskMin(s.ask_min_photos))
   }, [version])
+
+  const changeAskMin = (n: number) => {
+    setAskMin(n)
+    api.saveSettings({ ask_min_photos: n }).then(bump)
+  }
+
+  /** Name (or stop hiding) a hidden person; a picked existing person is matched by name and merged. */
+  const unhide = async (p: Person, t?: NameTarget) => {
+    const name = !t ? undefined : 'name' in t ? t.name
+      : 'person_id' in t ? (persons ?? []).find((x) => x.id === t.person_id)?.name : undefined
+    setHidden((hs) => hs.filter((h) => h.id !== p.id))
+    await api.unhidePerson(p.id, name).catch((e: Error) => setError(e.message))
+    peopleCache.invalidate()
+    bump()
+  }
 
   const act = (p: Promise<{ auto_named?: number } | unknown>, clusterId: number) => {
     // Optimistically drop the group; the next refresh brings the regrouped state.
@@ -62,8 +81,18 @@ export function People() {
       <section>
         <div className="section-head">
           <h2>Who are these people?</h2>
-          {groups && <span className="muted">{groups.length} unnamed {groups.length === 1 ? 'group' : 'groups'}</span>}
+          <label className="ask-min small">
+            Ask about people in at least
+            <select value={askMin} onChange={(e) => changeAskMin(Number(e.target.value))} aria-label="Minimum photos before asking">
+              {[2, 3, 5, 10, 20].map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+            photos
+          </label>
         </div>
+        {groups && groups.length > 0 && (
+          <p className="muted small">{groups.length} unnamed {groups.length === 1 ? 'group' : 'groups'}. Name the people you care about.
+            For everyone else, choose <strong>Hide person</strong>: PixSift stops asking and quietly sets their photos aside. You can name them later.</p>
+        )}
         {groups && !groups.length && (
           <p className="muted">No unnamed faces. New faces show up here after a scan.</p>
         )}
@@ -78,16 +107,48 @@ export function People() {
                 <span className="muted small">{g.count} pictures</span>
                 {g.suggestion && (
                   <button className="suggestion" onClick={() => act(api.nameGroup(g.cluster_id, { person_id: g.suggestion!.person_id }), g.cluster_id)}>
-                    <Icon name="check" size={16} /> Is this <strong>{g.suggestion.name}</strong>?
+                    <Icon name="check" size={16} />
+                    {g.suggestion.hidden ? <>Looks like someone you hid. <strong>Hide too</strong></> : <>Is this <strong>{g.suggestion.name}</strong>?</>}
                   </button>
                 )}
                 <NameInput onSubmit={(t) => act(api.nameGroup(g.cluster_id, t), g.cluster_id)} />
-                <button className="link small" onClick={() => act(api.ignoreGroup(g.cluster_id), g.cluster_id)}>Ignore these faces</button>
+                <div className="group-secondary">
+                  <button onClick={() => act(api.hideGroup(g.cluster_id), g.cluster_id)}
+                    title="Stop asking about this person. Find them later under Hidden people">
+                    Hide person
+                  </button>
+                  <button className="link small" onClick={() => act(api.ignoreGroup(g.cluster_id), g.cluster_id)}
+                    title="These aren't real faces (posters, statues…)">Not faces</button>
+                </div>
               </div>
             </li>
           ))}
         </ul>
       </section>
+      {hidden.length > 0 && (
+        <section>
+          <details className="hidden-people">
+            <summary><h2>Hidden people <span className="muted">({hidden.length})</span></h2></summary>
+            <p className="muted small">People you chose not to tag. PixSift still recognises them so it doesn't ask again.
+              Name someone any time: every photo of them found meanwhile comes along.</p>
+            <ul className="group-list">
+              {hidden.map((p) => (
+                <li key={p.id} className="group-card hidden-card">
+                  <div className="hidden-head">
+                    {p.cover_face_id ? <img src={api.faceUrl(p.cover_face_id)} alt="" className="face-avatar xl" loading="lazy" /> : <span className="face-avatar xl" />}
+                    <div>
+                      <strong>{p.count} {p.count === 1 ? 'photo' : 'photos'}</strong>
+                      <div><Link className="small" to={`/library?person=${p.id}`}>See photos</Link></div>
+                    </div>
+                  </div>
+                  <NameInput placeholder="Name this person" submitLabel="Name" onSubmit={(t) => unhide(p, t)} />
+                  <button className="link small" onClick={() => unhide(p)}>Ask me about them again</button>
+                </li>
+              ))}
+            </ul>
+          </details>
+        </section>
+      )}
     </div>
   )
 }

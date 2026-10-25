@@ -93,7 +93,7 @@ export function Viewer({ items, total, index, loadMore, onIndex, onClose }: Prop
       else if (e.key === 'ArrowLeft') go(-1)
       else if (e.key === 'i') setShowInfo((v) => !v)
       else if (e.key === 'f') setShowFaces((v) => !v)
-      else if (e.key === 'e') setEditing(true)
+      else if (e.key === 'e' && !offline) setEditing(true)
       else if (e.key === '+' || e.key === '=') zoomBy(1.5)
       else if (e.key === '-') zoomBy(1 / 1.5)
       else if (e.key === '0') { setZoom(1); setPan({ x: 0, y: 0 }) }
@@ -105,6 +105,7 @@ export function Viewer({ items, total, index, loadMore, onIndex, onClose }: Prop
   }, [go, onClose, activeFace, editing])
 
   if (!item) return null
+  const offline = item.offline === 1
 
   // Fit the picture into the stage; face boxes are positioned in % of this frame.
   const dims = natural ?? (item.width && item.height ? { w: item.width, h: item.height } : null)
@@ -149,9 +150,9 @@ export function Viewer({ items, total, index, loadMore, onIndex, onClose }: Prop
           <span className="sep" />
           <button className={`icon-btn ${showFaces ? 'on' : ''}`} onClick={() => setShowFaces((v) => !v)} aria-pressed={showFaces}
             aria-label="Show faces (F)" title="Show faces (F)"><Icon name="face" /></button>
-          <button className="icon-btn" onClick={() => setEditing(true)} aria-label="Edit (E)" title="Edit (E)"><Icon name="edit" /></button>
-          <button className="icon-btn" onClick={() => act(api.reveal(item.id))} aria-label={revealLabel} title={revealLabel}><Icon name="folder" /></button>
-          <button className="icon-btn" onClick={() => act(api.open(item.id))} aria-label="Open in default app" title="Open in default app"><Icon name="open" /></button>
+          <button className="icon-btn" disabled={offline} onClick={() => setEditing(true)} aria-label="Edit (E)" title="Edit (E)"><Icon name="edit" /></button>
+          <button className="icon-btn" disabled={offline} onClick={() => act(api.reveal(item.id))} aria-label={revealLabel} title={revealLabel}><Icon name="folder" /></button>
+          <button className="icon-btn" disabled={offline} onClick={() => act(api.open(item.id))} aria-label="Open in default app" title="Open in default app"><Icon name="open" /></button>
           <button className="icon-btn" onClick={() => act(navigator.clipboard.writeText(item.path), 'Path copied')} aria-label="Copy path" title="Copy path"><Icon name="copy" /></button>
           <button className={`icon-btn ${showInfo ? 'on' : ''}`} onClick={() => setShowInfo((v) => !v)} aria-pressed={showInfo}
             aria-label="Info (I)" title="Info (I)"><Icon name="info" /></button>
@@ -163,14 +164,14 @@ export function Viewer({ items, total, index, loadMore, onIndex, onClose }: Prop
         onDoubleClick={() => (zoom > 1 ? (setZoom(1), setPan({ x: 0, y: 0 })) : setZoom(2.5))}
         style={{ cursor: zoom > 1 ? 'grab' : undefined }}>
         <div className="frame" style={{ ...frame, transform: `scale(${zoom}) translate(${pan.x}px, ${pan.y}px)` }}>
-          <img key={item.id} src={api.previewUrl(item.id, item.size)} alt={item.filename} draggable={false}
+          <img key={item.id} src={offline ? api.thumbUrl(item.id) : api.previewUrl(item.id, item.size)} alt={item.filename} draggable={false}
             onLoad={(e) => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })} />
           {showFaces && faces.map((f) => (
-            <button key={f.id} className={`face-box ${f.person_id ? 'named' : ''} ${f.assigned_by === 'auto' ? 'auto' : ''} ${activeFace?.id === f.id ? 'active' : ''}`}
+            <button key={f.id} className={`face-box ${f.person_hidden ? 'hidden-person' : f.person_id ? 'named' : ''} ${f.assigned_by === 'auto' ? 'auto' : ''} ${activeFace?.id === f.id ? 'active' : ''}`}
               style={{ left: `${f.x * 100}%`, top: `${f.y * 100}%`, width: `${f.w * 100}%`, height: `${f.h * 100}%` }}
               onClick={(e) => { e.stopPropagation(); setActiveFace(f) }}
-              aria-label={f.person_name ? `Face: ${f.person_name}` : 'Unnamed face, click to name'}>
-              <span className="face-label">{f.person_name ? `${f.person_name}${f.assigned_by === 'auto' ? '?' : ''}` : '?'}</span>
+              aria-label={f.person_hidden ? 'Hidden person' : f.person_name ? `Face: ${f.person_name}` : 'Unnamed face, click to name'}>
+              <span className="face-label">{f.person_hidden ? 'Hidden' : f.person_name ? `${f.person_name}${f.assigned_by === 'auto' ? '?' : ''}` : '?'}</span>
             </button>
           ))}
         </div>
@@ -178,6 +179,13 @@ export function Viewer({ items, total, index, loadMore, onIndex, onClose }: Prop
         <button className="nav next" onClick={() => go(1)} disabled={index >= items.length - 1} aria-label="Next (→)"><Icon name="right" size={28} /></button>
         {activeFace && (
           <FaceTag face={activeFace} onClose={() => setActiveFace(null)} onDone={() => { setActiveFace(null); changed() }} />
+        )}
+        {offline && (
+          <div className="offline-note" role="status">
+            <Icon name="drive" size={16} />
+            <span>On drive <strong>{item.drive}</strong>, which isn't connected. Showing a small preview; connect the drive to
+              see it full size, open or edit it.</span>
+          </div>
         )}
         {message && <div className="toast" role="status">{message}</div>}
       </div>

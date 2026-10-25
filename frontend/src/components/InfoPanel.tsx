@@ -45,6 +45,10 @@ export function InfoPanel({ img, onChanged, onFace }: Props) {
           <dt><Icon name="pin" size={15} /></dt>
           <dd>{img.gps_lat.toFixed(5)}, {img.gps_lon.toFixed(5)}</dd>
         </>)}
+        {img.drive && (<>
+          <dt><Icon name="drive" size={15} /></dt>
+          <dd>Drive {img.drive}{img.offline ? <span className="muted"> · not connected</span> : ''}</dd>
+        </>)}
         <dt><Icon name="folder" size={15} /></dt>
         <dd className="path">{img.folder}</dd>
       </dl>
@@ -69,10 +73,10 @@ export function InfoPanel({ img, onChanged, onFace }: Props) {
             <li key={f.id}>
               <button className="face-chip" onClick={() => onFace(f)} aria-label={f.person_name ? `${f.person_name}: rename or remove` : 'Name this face'}>
                 <img src={api.faceUrl(f.id)} alt="" className="face-avatar" />
-                <span>{f.person_name ?? <em className="muted">Name…</em>}</span>
-                {f.assigned_by === 'auto' && <span className="auto-tag" title="Recognised automatically. Click to confirm">auto</span>}
+                <span>{f.person_hidden ? <em className="muted">Hidden person</em> : f.person_name ?? <em className="muted">Name…</em>}</span>
+                {f.assigned_by === 'auto' && !f.person_hidden && <span className="auto-tag" title="Recognised automatically. Click to confirm">auto</span>}
               </button>
-              {f.person_id && (
+              {f.person_id && !f.person_hidden && (
                 <Link to={`/people/${f.person_id}`} className="small" aria-label={`All pictures of ${f.person_name}`}>
                   All
                 </Link>

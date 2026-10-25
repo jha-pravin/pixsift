@@ -1,6 +1,7 @@
 """HTTP API consumed by the UI. Binds to localhost only; files are served by id, never by raw path."""
 
 import io
+from contextlib import asynccontextmanager
 import json
 import os
 import string
@@ -12,7 +13,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import __version__, platform_ops
@@ -22,8 +23,10 @@ from .deps import MUTATING
 from .editor import EditRequest, apply_edit
 from .media import process_file
 from .people_api import router as people_router
+from .faces import ask_min_photos
 from .pipeline import Pipeline
 from .security import AccessGuard
+from .volumes import DriveWatcher
 
 BROWSER_NATIVE = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 PREVIEW_MAX = 2048
@@ -35,7 +38,8 @@ SORTS = {
 }
 LIST_COLUMNS = (
     "i.id, i.path, i.folder, i.filename, i.ext, i.size, i.width, i.height, i.taken_at, i.date_source, "
-    "i.thumb, i.error, i.missing, i.category, i.face_count, i.camera_model"
+    "i.thumb, i.error, i.missing, i.category, i.face_count, i.camera_model, i.volume_id, "
+    "COALESCE(v.mounted = 0, 0) AS offline, v.label AS drive"
 )
 
 
@@ -52,14 +56,30 @@ class TagRequest(BaseModel):
     tag: str
 
 
+class DriveUpdate(BaseModel):
+    auto_scan: bool
+
+
+class SettingsUpdate(BaseModel):
+    ask_min_photos: int = Field(ge=2, le=100)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     settings.ensure_dirs()
     db = Database(settings.db_path)
     pipeline = Pipeline(db, settings)
+    watcher = DriveWatcher(db, lambda roots: pipeline.start(roots))
 
-    app = FastAPI(title="PixSift", version=__version__)
-    app.state.db, app.state.pipeline, app.state.settings = db, pipeline, settings
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        if settings.watch_drives:
+            watcher.start()
+        yield
+        watcher.stop()
+
+    app = FastAPI(title="PixSift", version=__version__, lifespan=lifespan)
+    app.state.db, app.state.pipeline, app.state.settings, app.state.watcher = db, pipeline, settings, watcher
     # Starlette runs the last-added middleware first: Host check (DNS rebinding), then the access guard.
     app.add_middleware(AccessGuard, token=settings.token)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"])
@@ -73,6 +93,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def existing_file(row: dict) -> str:
         if not os.path.isfile(row["path"]):
+            drive = row.get("volume_id") and db.query_one(
+                "SELECT label FROM volumes WHERE id=? AND mounted=0", (row["volume_id"],))
+            if drive:
+                raise HTTPException(409, f"Connect the drive “{drive['label']}” to open this picture")
             raise HTTPException(410, "file no longer exists on disk")
         return row["path"]
 
@@ -96,10 +120,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "GROUP BY quick_hash HAVING n > 1)"
         )
         people = db.query_one(
-            "SELECT (SELECT COUNT(*) FROM persons) AS people, "
+            "SELECT (SELECT COUNT(*) FROM persons WHERE hidden=0) AS people, "
             "(SELECT COUNT(DISTINCT cluster_id) FROM faces WHERE cluster_id IS NOT NULL AND person_id IS NULL "
             " AND ignored=0) AS unnamed_groups, "
-            "(SELECT COUNT(*) FROM faces WHERE assigned_by='auto') AS auto_named"
+            "(SELECT COUNT(*) FROM faces f JOIN persons p ON p.id=f.person_id "
+            " WHERE f.assigned_by='auto' AND p.hidden=0) AS auto_named, "
+            "(SELECT COUNT(*) FROM volumes WHERE status='tracked') AS drives"
         )
         return {**totals, **people, "duplicate_groups": dupes["groups"], "duplicate_files": dupes["extra"]}
 
@@ -146,9 +172,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         bad = [r for r in roots if not os.path.isdir(r)]
         if not roots or bad:
             raise HTTPException(400, f"not a directory: {', '.join(bad) or '(none given)'}")
+        if settings.watch_drives:
+            watcher.sync()  # so pictures on a just-connected drive are linked to it
         if not pipeline.start(roots, analyze=req.analyze):
             raise HTTPException(409, "a job is already running")
         return pipeline.snapshot()
+
+    # ---- drives -----------------------------------------------------------------------------------
+
+    @app.get("/api/drives")
+    def drives():
+        return db.query(
+            "SELECT v.id, v.label, v.mount, v.mounted, v.status, v.auto_scan, v.last_seen, v.last_scanned, "
+            "(SELECT COUNT(*) FROM images i WHERE i.volume_id=v.id AND i.missing=0) AS pictures "
+            "FROM volumes v WHERE v.status<>'ignored' OR v.mounted=1 ORDER BY v.mounted DESC, v.label"
+        )
+
+    def get_drive(drive_id: int) -> dict:
+        row = db.query_one("SELECT * FROM volumes WHERE id=?", (drive_id,))
+        if not row:
+            raise HTTPException(404, "drive not found")
+        return row
+
+    @app.post("/api/drives/{drive_id}/scan", dependencies=MUTATING)
+    def scan_drive(drive: dict = Depends(get_drive)):
+        if not drive["mounted"]:
+            raise HTTPException(409, f"Connect the drive “{drive['label']}” first")
+        if not pipeline.start(watcher.track(drive["id"])):
+            raise HTTPException(409, "a job is already running")
+        return pipeline.snapshot()
+
+    @app.post("/api/drives/{drive_id}/ignore", dependencies=MUTATING)
+    def ignore_drive(drive: dict = Depends(get_drive)):
+        db.execute("UPDATE volumes SET status='ignored' WHERE id=?", (drive["id"],))
+        return {"ok": True}
+
+    @app.patch("/api/drives/{drive_id}", dependencies=MUTATING)
+    def update_drive(req: DriveUpdate, drive: dict = Depends(get_drive)):
+        db.execute("UPDATE volumes SET auto_scan=? WHERE id=?", (int(req.auto_scan), drive["id"]))
+        return {"ok": True}
+
+    # ---- settings ---------------------------------------------------------------------------------
+
+    @app.get("/api/settings")
+    def get_settings():
+        return {"ask_min_photos": ask_min_photos(db)}
+
+    @app.put("/api/settings", dependencies=MUTATING)
+    def put_settings(req: SettingsUpdate):
+        db.set_setting("ask_min_photos", str(req.ask_min_photos))
+        return get_settings()
 
     @app.post("/api/analyze", dependencies=MUTATING)
     def start_analyze():
@@ -192,6 +265,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         date_from: str | None = None,
         date_to: str | None = None,
         duplicates: bool = False,
+        drive: int | None = None,
         sort: Literal["taken_desc", "taken_asc", "name", "size_desc"] = "taken_desc",
     ):
         where, params = ["i.missing=0"], []
@@ -220,16 +294,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if date_to:
             where.append("i.taken_at < ?")
             params.append(date_to)
+        if drive:
+            where.append("i.volume_id=?")
+            params.append(drive)
         if duplicates:
             where.append(
                 "i.quick_hash IN (SELECT quick_hash FROM images WHERE missing=0 AND quick_hash IS NOT NULL "
                 "GROUP BY quick_hash HAVING COUNT(*) > 1)"
             )
         clause = " AND ".join(where)
-        total = db.query_one(f"SELECT COUNT(*) AS n FROM images i WHERE {clause}", params)["n"]
+        total = db.query_one(f"SELECT COUNT(*) AS n FROM images i LEFT JOIN volumes v ON v.id=i.volume_id "
+                             f"WHERE {clause}", params)["n"]
         order = "i.quick_hash, i.id" if duplicates else SORTS[sort]
         items = db.query(
-            f"SELECT {LIST_COLUMNS} FROM images i WHERE {clause} ORDER BY {order} LIMIT ? OFFSET ?",
+            f"SELECT {LIST_COLUMNS} FROM images i LEFT JOIN volumes v ON v.id=i.volume_id "
+            f"WHERE {clause} ORDER BY {order} LIMIT ? OFFSET ?",
             [*params, limit, offset],
         )
         return {"total": total, "offset": offset, "limit": limit, "items": items}
@@ -244,12 +323,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (row["quick_hash"], row["id"]),
             )
         faces = db.query(
-            "SELECT f.id, f.x, f.y, f.w, f.h, f.person_id, p.name AS person_name, f.cluster_id, f.ignored, f.assigned_by "
+            "SELECT f.id, f.x, f.y, f.w, f.h, f.person_id, p.name AS person_name, f.cluster_id, f.ignored, "
+            "f.assigned_by, COALESCE(p.hidden, 0) AS person_hidden "
             "FROM faces f LEFT JOIN persons p ON p.id=f.person_id WHERE f.image_id=? ORDER BY f.x",
             (row["id"],),
         )
         tags_ = [t["tag"] for t in db.query("SELECT tag FROM tags WHERE image_id=? ORDER BY tag", (row["id"],))]
         edits = db.query("SELECT id, path FROM images WHERE edited_from=? AND missing=0", (row["id"],))
+        drive = db.query_one("SELECT label, mounted FROM volumes WHERE id=?", (row["volume_id"],)) \
+            if row["volume_id"] else None
+        row["drive"] = drive["label"] if drive else None
+        row["offline"] = int(bool(drive) and not drive["mounted"])
         return {**row, "duplicates": dupes, "faces": faces, "tags": tags_, "edits": edits}
 
     @app.get("/api/images/{image_id}/thumb")

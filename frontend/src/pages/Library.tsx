@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { api, CATEGORY_LABELS, type CategoryFilter, type ImageQuery, type Person, type Sort } from '../api'
+import { api, CATEGORY_LABELS, type CategoryFilter, type Drive, type ImageQuery, type Person, type Sort } from '../api'
 import { PhotoGrid } from '../components/PhotoGrid'
 import { Viewer } from '../components/Viewer'
 import { useDebounced } from '../hooks/useDebounced'
@@ -15,6 +15,7 @@ export function Library() {
   const [persons, setPersons] = useState<Person[]>([])
   const [folders, setFolders] = useState<{ folder: string; count: number }[]>([])
   const [tags, setTags] = useState<{ tag: string; count: number }[]>([])
+  const [drives, setDrives] = useState<Drive[]>([])
   const [search, setSearch] = useState(params.get('q') ?? '')
   const [view, setView] = useState<number | null>(null)
   const q = useDebounced(search.trim())
@@ -23,6 +24,7 @@ export function Library() {
     api.persons('name').then(setPersons)
     api.folders().then(setFolders)
     api.tags().then(setTags)
+    api.drives().then((ds) => setDrives(ds.filter((d) => d.status === 'tracked')))
   }, [version])
 
   useEffect(() => { setSearch(params.get('q') ?? '') }, [params])
@@ -48,6 +50,7 @@ export function Library() {
     date_from: params.get('from') ? `${params.get('from')}-01` : undefined,
     date_to: params.get('to') ? nextMonth(params.get('to')!) : undefined,
     duplicates: params.get('duplicates') === '1',
+    drive: params.get('drive') ? Number(params.get('drive')) : undefined,
     sort: (params.get('sort') as Sort) || 'taken_desc',
   }), [params])
 
@@ -88,6 +91,12 @@ export function Library() {
             <option value="">All folders</option>
             {folders.map((f) => <option key={f.folder} value={f.folder}>{f.folder} ({f.count})</option>)}
           </select>
+          {drives.length > 0 && (
+            <select aria-label="Drive" value={params.get('drive') ?? ''} onChange={(e) => set('drive', e.target.value || null)}>
+              <option value="">All drives</option>
+              {drives.map((d) => <option key={d.id} value={d.id}>{d.label}{d.mounted ? '' : ' (not connected)'}</option>)}
+            </select>
+          )}
           <label className="date-range">
             <span className="muted small">From</span>
             <input type="month" value={params.get('from') ?? ''} onChange={(e) => set('from', e.target.value || null)} aria-label="From month" />

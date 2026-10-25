@@ -34,7 +34,7 @@ if mac:
         icon=str(Path(SPECPATH) / "pixsift.icns"),
         bundle_identifier="app.pixsift.desktop",
         info_plist={
-            "CFBundleShortVersionString": "0.2.0",
+            "CFBundleShortVersionString": "0.3.0",
             "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": "12.0",
             # Shown by macOS the first time PixSift scans these protected locations.

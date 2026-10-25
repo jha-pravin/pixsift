@@ -86,7 +86,7 @@ def process_file(path: str, size: int, mtime: float, thumbs_dir: Path, thumb_siz
         "path": path, "folder": str(p.parent), "filename": p.name, "ext": p.suffix.lower(),
         "size": size, "mtime": mtime, "quick_hash": None, "width": None, "height": None,
         "taken_at": None, "camera_make": None, "camera_model": None, "gps_lat": None, "gps_lon": None,
-        "has_exif": 0, "date_source": None, "thumb": None, "error": None,
+        "has_exif": 0, "date_source": None, "thumb": None, "error": None, "volume_id": None,
     }
     try:
         digest = quick_hash(path, size)

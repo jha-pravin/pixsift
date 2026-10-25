@@ -25,14 +25,15 @@ export function JobProvider({ children }: { children: ReactNode }) {
 
   const running = job?.state === 'running'
   useEffect(() => {
-    if (!running) return
+    // Every second while a job runs; every 5 s when idle, to notice drives being plugged in
+    // (which may start a scan by themselves).
     const t = setInterval(async () => {
       const next = await api.job().catch(() => null)
       if (!next) return
       setJob(next)
       // Refresh visible data every few seconds while running, and once when the job ends.
-      if (next.state !== 'running' || ++ticks.current % 5 === 0) bump()
-    }, 1000)
+      if (running && (next.state !== 'running' || ++ticks.current % 5 === 0)) bump()
+    }, running ? 1000 : 5000)
     return () => clearInterval(t)
   }, [running, bump])
 

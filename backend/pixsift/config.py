@@ -35,6 +35,7 @@ class Settings:
     min_file_bytes: int = int(os.environ.get("PIXSIFT_MIN_BYTES", "10000"))  # skip icons / tiny sprites
     workers: int = max(2, (os.cpu_count() or 4) - 1)
     # Per-launch access token (see security.py). Set PIXSIFT_TOKEN to keep one fixed, e.g. for UI development.
+    watch_drives: bool = os.environ.get("PIXSIFT_WATCH_DRIVES", "1") != "0"
     token: str = field(default_factory=lambda: os.environ.get("PIXSIFT_TOKEN") or secrets.token_urlsafe(32))
 
     @property

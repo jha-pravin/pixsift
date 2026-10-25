@@ -42,6 +42,7 @@ def client(tmp_path, monkeypatch):
         save(v, lib / f"cam_{i}.jpg", f"2019:0{i + 1}:01 10:00:00")
     Image.open(FIX / "page.jpg").save(lib / "page.jpg")
     app = create_app(Settings(data_dir=tmp_path / "data", min_file_bytes=1000, token="test-token"))
+    app.state.db.set_setting("ask_min_photos", "2")  # the test library is tiny: ask about 2-photo groups too
     with TestClient(app, cookies={"pixsift_token": "test-token"}) as tc:
         tc.post("/api/scan", json={"roots": [str(lib)]}, headers=UI).raise_for_status()
         app.state.pipeline.join(120)

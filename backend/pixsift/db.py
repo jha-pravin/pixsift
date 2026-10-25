@@ -92,11 +92,33 @@ CREATE TABLE face_rejections (
     PRIMARY KEY (face_id, person_id)
 );
 """,
+"""
+-- External drives, identified by the OS volume ID so a drive is recognised at any mount point / drive letter.
+CREATE TABLE volumes (
+    id            INTEGER PRIMARY KEY,
+    uid           TEXT NOT NULL UNIQUE,
+    label         TEXT NOT NULL,
+    mount         TEXT NOT NULL,                  -- where it was last mounted
+    mounted       INTEGER NOT NULL DEFAULT 0,
+    status        TEXT NOT NULL DEFAULT 'new',    -- new (ask the user) | tracked | ignored
+    auto_scan     INTEGER NOT NULL DEFAULT 1,     -- re-scan whenever it's connected
+    last_seen     TEXT,
+    last_scanned  TEXT
+);
+ALTER TABLE images ADD COLUMN volume_id INTEGER REFERENCES volumes(id);
+ALTER TABLE scan_roots ADD COLUMN volume_id INTEGER REFERENCES volumes(id);
+CREATE INDEX ix_images_volume ON images(volume_id);
+
+-- Hidden people: recognised quietly so they're never asked about, until the user names them.
+ALTER TABLE persons ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+""",
 ]
 
 IMAGE_COLUMNS = (
     "path", "folder", "filename", "ext", "size", "mtime", "quick_hash", "width", "height",
-    "taken_at", "camera_make", "camera_model", "gps_lat", "gps_lon", "has_exif", "date_source", "thumb", "error",
+    "taken_at", "camera_make", "camera_model", "gps_lat", "gps_lon", "has_exif", "date_source", "thumb", "error", "volume_id",
 )
 
 
@@ -152,7 +174,7 @@ class Database:
         """path -> (size, mtime) for every indexed file under root (only the columns needed)."""
         rows = self.conn().execute(
             "SELECT path, size, mtime FROM images WHERE path = ? OR path LIKE ? ESCAPE '\\'",
-            (root, _like_prefix(root)),
+            (root, like_prefix(root)),
         )
         return {r[0]: (r[1], r[2]) for r in rows}
 
@@ -164,16 +186,37 @@ class Database:
         with self.conn() as c:
             c.executemany("UPDATE images SET missing=0 WHERE path=? AND missing=1", ((p,) for p in paths))
 
-    def record_root(self, root: str) -> None:
+    def record_root(self, root: str, volume_id: int | None = None) -> None:
         with self.conn() as c:
             c.execute(
-                "INSERT INTO scan_roots(path, last_scanned) VALUES (?, datetime('now')) "
-                "ON CONFLICT(path) DO UPDATE SET last_scanned=excluded.last_scanned",
-                (root,),
+                "INSERT INTO scan_roots(path, last_scanned, volume_id) VALUES (?, datetime('now'), ?) "
+                "ON CONFLICT(path) DO UPDATE SET last_scanned=excluded.last_scanned, volume_id=excluded.volume_id",
+                (root, volume_id),
             )
 
+    def volume_for(self, path: str) -> dict | None:
+        """The connected drive that holds `path` (longest mount-point match), or None for internal disks."""
+        best = None
+        for v in self.query("SELECT id, mount, label FROM volumes WHERE mounted=1"):
+            if is_within(path, v["mount"]) and (best is None or len(v["mount"]) > len(best["mount"])):
+                best = v
+        return best
 
-def _like_prefix(root: str) -> str:
+    def setting(self, key: str, default: str) -> str:
+        row = self.query_one("SELECT value FROM settings WHERE key=?", (key,))
+        return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        self.execute("INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                     (key, value))
+
+
+def is_within(path: str, root: str) -> bool:
+    base = root.rstrip("/\\")
+    return path == base or path.startswith(base + os.sep)
+
+
+def like_prefix(root: str) -> str:
     """LIKE pattern matching everything strictly inside `root`."""
     base = root.rstrip("/\\") + os.sep
     return base.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"

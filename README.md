@@ -11,10 +11,11 @@ your computer; nothing is uploaded. Originals are never changed unless you expli
 
 | Area | What you get |
 |------|--------------|
-| **Scan** | Pick folders or whole drives (native folder picker in the desktop app). Incremental re-scans; deleted files drop out; duplicates detected. JPG, PNG, HEIC/HEIF, WEBP, GIF, TIFF, BMP. |
+| **Scan** | Pick folders or whole drives (native multi-folder picker in the desktop app). Incremental re-scans; deleted files drop out; duplicates detected. JPG, PNG, HEIC/HEIF, WEBP, GIF, TIFF, BMP. |
+| **External drives** | A newly connected drive gets one question: "Find pictures on it?" Pictures on an unplugged drive stay in your library (thumbnails, faces, names) marked with the drive's name, so a person's timeline still shows them. Reconnect it and new pictures are found automatically. Drives are recognised by their volume ID, so a new mount point or drive letter doesn't matter. |
 | **Dashboard** | Counts and previews per type, people, unnamed face groups, recent pictures, duplicates. |
 | **Picture types** | Automatic: Photo / Document / Screenshot / Graphic (on-device CLIP model + file hints), plus "has people". You can correct any picture's type; re-analysis keeps your choice. |
-| **Faces & people** | Faces are detected and grouped automatically. Name a group once ("Who is this?"), or click a face in any picture. PixSift then recognises that person in other photos: confident matches are named automatically (dashed ring, "to review"; confirm in one click), less certain ones are suggested ("Is this Mom?"). Merge, rename, "Not this person", ignore strangers. |
+| **Faces & people** | Faces are detected and grouped automatically. Name a group once ("Who is this?"), or click a face in any picture. PixSift then recognises that person in other photos: confident matches are named automatically (dashed ring, "to review"; confirm in one click), less certain ones are suggested ("Is this Mom?"). Merge, rename, "Not this person", ignore strangers. **Hide person** stops PixSift asking about someone (they're still recognised quietly); name them later from *Hidden people* and every photo found meanwhile comes along. Only people in at least N photos are asked about (default 3). |
 | **Person timeline** | Click a name: all their pictures by month, a by-year chart, date range, cameras, folders, places (GPS), and who they're often pictured with. |
 | **Viewer** | Full-screen, ←/→, zoom and pan, filmstrip, face boxes, info panel (date, camera, size, location, folder), tags, related files (duplicates, edited copies). |
 | **Show in Finder / Explorer** | From every thumbnail and the viewer, opens the folder with the file selected. Also Open with default app and Copy path. |

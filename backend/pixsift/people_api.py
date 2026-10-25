@@ -51,6 +51,10 @@ class MergeRequest(BaseModel):
     into_id: int
 
 
+class UnhideRequest(BaseModel):
+    name: str | None = None  # None/empty = put their faces back into "Who are these people?"
+
+
 class ConfirmRequest(BaseModel):
     face_ids: list[int] | None = Field(None, max_length=5000)  # None = all automatic matches of this person
 
@@ -85,6 +89,13 @@ def reject(face_id: int, db: Database = Depends(get_db)):
     return {"ok": True}
 
 
+@router.post("/faces/{face_id}/hide", dependencies=MUTATING)
+def hide_face(face_id: int, db: Database = Depends(get_db)):
+    person_id = face_ops.hide_faces(db, [face_id])
+    face_ops.auto_assign(db)
+    return {"person_id": person_id}
+
+
 @router.post("/faces/{face_id}/ignore", dependencies=MUTATING)
 def ignore(face_id: int, db: Database = Depends(get_db)):
     db.execute("UPDATE faces SET ignored=1, person_id=NULL, cluster_id=NULL WHERE id=?", (face_id,))
@@ -115,6 +126,13 @@ def name_group(cluster_id: int, req: NameTarget, db: Database = Depends(get_db))
     return {"person_id": person_id, "auto_named": face_ops.auto_assign(db)}
 
 
+@router.post("/face-groups/{cluster_id}/hide", dependencies=MUTATING)
+def hide_group(cluster_id: int, db: Database = Depends(get_db)):
+    person_id = face_ops.hide_faces(db, _group_face_ids(db, cluster_id))
+    face_ops.auto_assign(db)  # quietly collect this person's other photos too
+    return {"person_id": person_id}
+
+
 @router.post("/face-groups/{cluster_id}/ignore", dependencies=MUTATING)
 def ignore_group(cluster_id: int, db: Database = Depends(get_db)):
     ids = _group_face_ids(db, cluster_id)
@@ -125,7 +143,7 @@ def ignore_group(cluster_id: int, db: Database = Depends(get_db)):
 # ---- persons ------------------------------------------------------------------------------------
 
 _PERSON_SQL = """
-SELECT p.id, p.name,
+SELECT p.id, p.name, p.hidden,
        COALESCE(p.cover_face_id, (SELECT f2.id FROM faces f2 WHERE f2.person_id=p.id ORDER BY f2.score DESC LIMIT 1))
            AS cover_face_id,
        COUNT(DISTINCT f.image_id) AS count,
@@ -138,9 +156,9 @@ LEFT JOIN images i ON i.id = f.image_id AND i.missing = 0
 
 
 @router.get("/persons")
-def list_persons(db: Database = Depends(get_db), sort: str = Query("count")):
+def list_persons(db: Database = Depends(get_db), sort: str = Query("count"), hidden: bool = False):
     order = "p.name COLLATE NOCASE" if sort == "name" else "count DESC, p.name COLLATE NOCASE"
-    return db.query(f"{_PERSON_SQL} GROUP BY p.id ORDER BY {order}")
+    return db.query(f"{_PERSON_SQL} WHERE p.hidden=? GROUP BY p.id ORDER BY {order}", (int(hidden),))
 
 
 @router.get("/persons/{person_id}")
@@ -163,9 +181,9 @@ def person_detail(person_id: int, db: Database = Depends(get_db)):
         f"SELECT id, gps_lat AS lat, gps_lon AS lon, taken_at FROM images WHERE id IN ({imgs}) AND missing=0 "
         f"AND gps_lat IS NOT NULL ORDER BY taken_at DESC LIMIT 200", (person_id,))
     together = db.query(
-        "SELECT p.id, p.name, COUNT(DISTINCT f2.image_id) AS count FROM faces f1 "
+        "SELECT p.id, p.name, p.hidden, COUNT(DISTINCT f2.image_id) AS count FROM faces f1 "
         "JOIN faces f2 ON f2.image_id=f1.image_id AND f2.person_id IS NOT NULL AND f2.person_id<>f1.person_id "
-        "JOIN persons p ON p.id=f2.person_id WHERE f1.person_id=? GROUP BY p.id ORDER BY count DESC LIMIT 8",
+        "JOIN persons p ON p.id=f2.person_id AND p.hidden=0 WHERE f1.person_id=? GROUP BY p.id ORDER BY count DESC LIMIT 8",
         (person_id,))
     return {**person, "cameras": cameras, "folders": folders, "years": years, "places": places, "together": together}
 
@@ -183,6 +201,22 @@ def person_faces(person_id: int, db: Database = Depends(get_db),
 def confirm_auto(person_id: int, req: ConfirmRequest, db: Database = Depends(get_db)):
     face_ops.confirm_auto(db, person_id, req.face_ids)
     return {"auto_named": face_ops.auto_assign(db)}  # more confirmed faces can recognise more photos
+
+
+@router.post("/persons/{person_id}/unhide", dependencies=MUTATING)
+def unhide(person_id: int, req: UnhideRequest, request: Request, db: Database = Depends(get_db)):
+    if not db.query_one("SELECT 1 FROM persons WHERE id=? AND hidden=1", (person_id,)):
+        raise HTTPException(404, "hidden person not found")
+    new_id = face_ops.unhide_person(db, person_id, req.name)
+    if new_id is None:
+        _regroup(request)
+    return {"person_id": new_id}
+
+
+def _regroup(request: Request) -> None:
+    """Regroup unnamed faces in the background job (takes ~30 s per 20k faces). If a job is already running,
+    the next one regroups them."""
+    request.app.state.pipeline.start(None)
 
 
 @router.post("/persons", dependencies=MUTATING)
@@ -208,11 +242,11 @@ def update_person(person_id: int, req: PersonUpdate, db: Database = Depends(get_
 
 
 @router.delete("/persons/{person_id}", dependencies=MUTATING)
-def delete_person(person_id: int, db: Database = Depends(get_db)):
+def delete_person(person_id: int, request: Request, db: Database = Depends(get_db)):
     """Forget the name; faces go back to unnamed groups (pictures are untouched)."""
     db.execute("UPDATE faces SET person_id=NULL, assigned_by=NULL WHERE person_id=?", (person_id,))
     db.execute("DELETE FROM persons WHERE id=?", (person_id,))
-    face_ops.recluster(db)
+    _regroup(request)
     return {"ok": True}
 
 

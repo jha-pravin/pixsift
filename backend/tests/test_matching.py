@@ -115,3 +115,13 @@ def test_confirming_auto_matches_makes_them_references(lib):
     F.confirm_auto(lib.db, eve)
     assert lib.owner(f) == (eve, "user")
     assert len(F.Matcher(lib.db)._emb) == 2
+
+
+def test_a_single_unnamed_person_still_forms_a_group(lib):
+    # HDBSCAN alone leaves everything ungrouped when all faces are one person.
+    ids = [lib.face(vec((0, 1), (10 + i, 0.2))) for i in range(4)]
+    stranger = lib.face(vec((5, 1)))
+    F.recluster(lib.db)
+    groups = F.unnamed_groups(lib.db)
+    assert len(groups) == 1 and {f["id"] for f in groups[0]["faces"]} == set(ids)
+    assert stranger not in {f["id"] for f in groups[0]["faces"]}

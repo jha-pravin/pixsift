@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { HashRouter, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { api, CATEGORY_LABELS, type Health, type Stats } from './api'
+import { DriveBanner } from './components/DriveBanner'
 import { Icon } from './components/Icon'
 import { JobPill } from './components/JobPill'
 import { AppProvider } from './hooks/app'
@@ -85,6 +86,7 @@ function Shell() {
           </form>
           <JobPill />
         </header>
+        <DriveBanner />
         <main className="content">
           <Routes>
             <Route path="/" element={<Dashboard />} />

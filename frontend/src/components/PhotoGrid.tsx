@@ -52,11 +52,16 @@ export function PhotoGrid({ items, total, loadMore, onOpen, groupByMonth, empty 
                     ? <img src={api.thumbUrl(it.id)} alt={it.filename} loading="lazy" />
                     : <span className="broken">Can't read</span>}
                   {it.face_count > 0 && <span className="badge"><Icon name="face" size={12} />{it.face_count}</span>}
+                  {it.offline === 1 && (
+                    <span className="badge offline" title={`On drive “${it.drive}”, not connected`}><Icon name="drive" size={12} /></span>
+                  )}
                 </button>
-                <button className="tile-reveal" title={revealLabel} aria-label={`${revealLabel}: ${it.filename}`}
-                  onClick={() => api.reveal(it.id)}>
-                  <Icon name="folder" size={15} />
-                </button>
+                {it.offline !== 1 && (
+                  <button className="tile-reveal" title={revealLabel} aria-label={`${revealLabel}: ${it.filename}`}
+                    onClick={() => api.reveal(it.id)}>
+                    <Icon name="folder" size={15} />
+                  </button>
+                )}
               </li>
             ))}
           </ul>

@@ -320,3 +320,23 @@ progress { width: 100%; height: 8px; accent-color: var(--accent); }
 .review-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .review-head p { flex: 1; margin: 0; }
 .review-cta { border: none; cursor: pointer; text-align: left; justify-content: flex-start; margin: 0; font: inherit; }
+
+/* ---------- Drives & hidden people ---------- */
+.drive-banner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 24px;
+  background: var(--accent-soft); border-bottom: 1px solid var(--border); }
+.drive-banner span { flex: 1; min-width: 200px; }
+.drives { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.drives li { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; }
+.badge.offline { left: auto; right: 6px; bottom: 6px; }
+.offline-note { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px;
+  max-width: min(640px, 90%); padding: 8px 14px; border-radius: 12px; background: rgba(30,33,40,.95); border: 1px solid #2a2e35;
+  font-size: 13px; z-index: 4; }
+.face-box.hidden-person { border-color: rgba(255,255,255,.35); border-style: dotted; }
+.ask-min { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.ask-min select { min-height: 28px; padding: 2px 6px; }
+.group-secondary { display: flex; align-items: center; gap: 12px; }
+.hidden-people summary { cursor: pointer; list-style: revert; margin-bottom: 10px; }
+.hidden-people summary h2 { display: inline; }
+.hidden-head { display: flex; align-items: center; gap: 12px; }
+.hidden-card .face-avatar { filter: grayscale(.6); }
+.hidden-card .link { justify-self: start; }

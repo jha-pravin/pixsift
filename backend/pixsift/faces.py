@@ -27,7 +27,10 @@ CONFIRMED = ("user", "carry")  # reference faces: named by the user (or kept fro
 CARRY_MIN_SIM = 0.45       # keep a name across re-analysis of the same picture / edited copy
 GROUP_MIN_SIM = 0.35       # member must be this close to its group centroid
 MERGE_MIN_SIM = 0.6        # leaf groups whose centroids are this similar are the same person
-MIN_GROUP = 2              # smallest unnamed group shown
+LEFTOVER_MIN_SIM = 0.5     # faces HDBSCAN left ungrouped are paired up when at least this similar
+LEFTOVER_MAX = 3000        # bound the O(n²) leftover pass; big libraries don't need it
+MIN_GROUP = 2              # smallest group that can exist
+ASK_MIN_DEFAULT = 3        # by default only ask about people seen in 3+ photos
 
 
 def to_blob(v: np.ndarray) -> bytes:
@@ -51,6 +54,7 @@ def recluster(db: Database) -> int:
     # Don't use cluster_selection_epsilon: sklearn's epsilon search crashes with NumPy >= 2.5.
     labels = HDBSCAN(min_cluster_size=MIN_GROUP, min_samples=1, copy=True,
                      cluster_selection_method="leaf").fit_predict(x)
+    labels = _group_leftovers(x, labels)
     labels = _merge_close_groups(x, labels)
     # Guard against chaining: members far from their group's centroid go back to "ungrouped".
     for lbl in set(labels) - {-1}:
@@ -64,6 +68,24 @@ def recluster(db: Database) -> int:
             ((int(lbl) if lbl >= 0 else None, r["id"]) for lbl, r in zip(labels, rows)),
         )
     return int(labels.max() + 1) if len(labels) else 0
+
+
+def _group_leftovers(x: np.ndarray, labels: np.ndarray) -> np.ndarray:
+    """HDBSCAN never forms a group when *all* points belong to one person (e.g. the last unnamed person, or a
+    small library), so faces it left ungrouped get a second, simpler pass: average-linkage clustering."""
+    idx = np.flatnonzero(labels == -1)
+    if not 2 <= len(idx) <= LEFTOVER_MAX:
+        return labels
+    sub = AgglomerativeClustering(n_clusters=None, metric="cosine", linkage="average",
+                                  distance_threshold=1 - LEFTOVER_MIN_SIM).fit_predict(x[idx])
+    labels = labels.copy()
+    next_label = labels.max() + 1
+    for s in np.unique(sub):
+        members = idx[sub == s]
+        if len(members) >= MIN_GROUP:
+            labels[members] = next_label
+            next_label += 1
+    return labels
 
 
 def _merge_close_groups(x: np.ndarray, labels: np.ndarray) -> np.ndarray:
@@ -202,16 +224,24 @@ def confirm_auto(db: Database, person_id: int, face_ids: list[int] | None = None
         db.execute("UPDATE faces SET assigned_by='user' WHERE person_id=? AND assigned_by='auto'", (person_id,))
 
 
+def ask_min_photos(db: Database) -> int:
+    """Only ask about people seen in at least this many photos (keeps one-off strangers out of the questions)."""
+    try:
+        return max(MIN_GROUP, int(db.setting("ask_min_photos", str(ASK_MIN_DEFAULT))))
+    except ValueError:
+        return MIN_GROUP
+
+
 def unnamed_groups(db: Database, limit: int = 300) -> list[dict]:
     """Unnamed face groups, largest first, with sample faces and a name suggestion."""
     groups = db.query(
         "SELECT cluster_id, COUNT(*) AS n FROM faces WHERE cluster_id IS NOT NULL AND person_id IS NULL "
-        "AND ignored=0 GROUP BY cluster_id HAVING n >= ? ORDER BY n DESC LIMIT ?", (MIN_GROUP, limit)
+        "AND ignored=0 GROUP BY cluster_id HAVING n >= ? ORDER BY n DESC LIMIT ?", (ask_min_photos(db), limit)
     )
     if not groups:
         return []
     matcher = Matcher(db)
-    names = {r["id"]: r["name"] for r in db.query("SELECT id, name FROM persons")}
+    people = {r["id"]: r for r in db.query("SELECT id, name, hidden FROM persons")}
     out = []
     for g in groups:
         faces = db.query(
@@ -226,7 +256,8 @@ def unnamed_groups(db: Database, limit: int = 300) -> list[dict]:
             j = int(np.argmax(mean))
             if mean[j] >= SUGGEST_MIN_SIM:
                 pid = matcher.person_ids[j]
-                suggestion = {"person_id": pid, "name": names[pid], "similarity": round(float(mean[j]), 3)}
+                suggestion = {"person_id": pid, "name": people[pid]["name"], "hidden": bool(people[pid]["hidden"]),
+                              "similarity": round(float(mean[j]), 3)}
         out.append({
             "cluster_id": g["cluster_id"],
             "count": g["n"],
@@ -249,8 +280,34 @@ def suggest_for_face(db: Database, face_id: int) -> dict | None:
     (pid, score, _), = matcher.best(from_blob(face["embedding"]), [face["taken_at"]], [rejected])
     if pid is None or score < SUGGEST_MIN_SIM:
         return None
-    name = db.query_one("SELECT name FROM persons WHERE id=?", (pid,))["name"]
-    return {"person_id": pid, "name": name, "similarity": round(score, 3)}
+    p = db.query_one("SELECT name, hidden FROM persons WHERE id=?", (pid,))
+    return {"person_id": pid, "name": p["name"], "hidden": bool(p["hidden"]), "similarity": round(score, 3)}
+
+
+def hide_faces(db: Database, face_ids: list[int]) -> int:
+    """'Don't ask me about this person': file the faces under a new hidden person. They stay references, so
+    this person's future photos are recognised and filed there quietly too."""
+    n = (db.query_one("SELECT COALESCE(MAX(id), 0) + 1 AS n FROM persons")["n"])
+    person_id = db.execute("INSERT INTO persons(name, hidden) VALUES (?, 1)", (f"Hidden person {n}",)).lastrowid
+    assign_faces(db, face_ids, person_id)
+    return person_id
+
+
+def unhide_person(db: Database, person_id: int, name: str | None) -> int | None:
+    """Stop hiding someone. With a name: they become a normal person (merged into an existing one of that
+    name); photos collected while hidden keep 'auto' status for review. Without: back into the questions."""
+    if name and name.strip():
+        name = " ".join(name.split())
+        existing = db.query_one("SELECT id FROM persons WHERE name=? AND id<>?", (name, person_id))
+        if existing:
+            merge_persons(db, person_id, existing["id"])
+            db.execute("UPDATE persons SET hidden=0 WHERE id=?", (existing["id"],))
+            return existing["id"]
+        db.execute("UPDATE persons SET name=?, hidden=0 WHERE id=?", (name, person_id))
+        return person_id
+    db.execute("UPDATE faces SET person_id=NULL, assigned_by=NULL WHERE person_id=?", (person_id,))
+    db.execute("DELETE FROM persons WHERE id=?", (person_id,))
+    return None  # caller regroups (slow on big libraries, so it runs as a background job)
 
 
 def get_or_create_person(db: Database, name: str) -> int:
