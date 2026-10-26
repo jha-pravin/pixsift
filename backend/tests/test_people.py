@@ -128,3 +128,27 @@ def test_tags(client):
     assert set(ids_by_name(client, q="old")) == {"cam_0.jpg"}
     client.delete(f"/api/images/{img}/tags/Old photos", headers=UI).raise_for_status()
     assert client.get("/api/tags").json() == []
+
+
+def test_exact_duplicates_reuse_analysis_and_names(client):
+    groups = client.get("/api/face-groups").json()
+    astro = next(g for g in groups if g["count"] == 3)
+    pid = client.post(f"/api/face-groups/{astro['cluster_id']}/name", json={"name": "Eileen"}, headers=UI).json()["person_id"]
+    copies = client.lib / "backup"
+    copies.mkdir()
+    import shutil
+    shutil.copy(client.lib / "astro_0.jpg", copies / "astro_0_copy.jpg")
+    shutil.copy(client.lib / "page.jpg", copies / "page_copy.jpg")
+    client.post("/api/scan", json={"roots": [str(copies)]}, headers=UI).raise_for_status()
+    client.app.state.pipeline.join(60)
+    job = client.get("/api/job").json()
+    assert job["duplicates"] == 2 and job["state"] == "done"
+    ids = ids_by_name(client)
+    copy = client.get(f"/api/images/{ids['astro_0_copy.jpg']}").json()
+    assert copy["category"] == "photo" and [f["person_name"] for f in copy["faces"]] == ["Eileen"]
+    assert client.get(f"/api/images/{ids['page_copy.jpg']}").json()["category"] == "document"
+    assert client.get(f"/api/persons/{pid}").json()["count"] == 4
+    # Re-analysing the copy must not delete the face crop the original still uses.
+    client.app.state.pipeline.analyze_now(ids["astro_0_copy.jpg"])
+    orig_face = client.get(f"/api/images/{ids['astro_0.jpg']}").json()["faces"][0]["id"]
+    assert client.get(f"/api/faces/{orig_face}/crop").status_code == 200

@@ -1,6 +1,6 @@
 [project]
 name = "pixsift"
-version = "0.3.0"
+version = "0.4.0"
 description = "Local-first picture organizer: scan, classify, tag faces, browse by person."
 requires-python = ">=3.11"
 license = "PolyForm-Noncommercial-1.0.0"
@@ -13,9 +13,7 @@ dependencies = [
     "platformdirs>=4.0",
     "numpy>=2.0",
     "onnxruntime>=1.20",
-    "opencv-python-headless>=4.10",
-    "scikit-learn>=1.5",
-    "tokenizers>=0.20",
+    "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'",  # Apple ImageIO: fast HEIC/JPEG decoding
 ]
 
 [project.optional-dependencies]
@@ -33,6 +31,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["pixsift*"]
+
+[tool.setuptools.package-data]
+pixsift = ["data/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

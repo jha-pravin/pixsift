@@ -6,14 +6,10 @@ from pydantic import BaseModel, Field, model_validator
 
 from . import faces as face_ops
 from .db import Database
-from .deps import MUTATING
+from .deps import MUTATING, get_db
 
 
 router = APIRouter()
-
-
-def get_db(request: Request) -> Database:
-    return request.app.state.db
 
 
 class NameTarget(BaseModel):

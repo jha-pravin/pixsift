@@ -94,7 +94,7 @@ ul.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .sidebar { background: var(--surface); border-right: 1px solid var(--border); padding: 16px 10px; display: flex;
   flex-direction: column; gap: 2px; overflow-y: auto; }
 .brand { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 17px; padding: 4px 10px 16px; letter-spacing: -0.01em; }
-.logo { width: 24px; height: 24px; border-radius: 7px; background: conic-gradient(from 210deg, #2f6fed, #18a058, #f0b45a, #e5484d, #2f6fed); }
+.logo { width: 30px; height: 30px; margin: -3px; }
 .sidebar a { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; color: var(--text); }
 .sidebar a:hover { background: var(--surface-2); text-decoration: none; }
 .sidebar a.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }

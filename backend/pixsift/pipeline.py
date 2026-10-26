@@ -44,7 +44,8 @@ class JobStatus:
     to_scan: int = 0                  # new/changed files this run (known after the folder walk)
     scan_started: float | None = None
     current_file: str | None = None
-    timeouts: int = 0  # pictures skipped because analysis hung
+    timeouts: int = 0
+    duplicates: int = 0  # exact copies that reused another picture's analysis  # pictures skipped because analysis hung
     auto_named: int = 0
     started_at: float | None = None
     finished_at: float | None = None
@@ -160,19 +161,23 @@ class Pipeline:
         if self.status.scan_started is None:
             self._set(scan_started=time.time())
         batch = _ANALYZE_BATCH if analyzer is not None else _SCAN_BATCH
+        # Exact duplicates (backups, copies) reuse the first copy's analysis instead of being analysed again.
+        analyzed = {r["quick_hash"]: r["id"] for r in self.db.query(
+            "SELECT quick_hash, MIN(id) AS id FROM images WHERE analyzed_at IS NOT NULL AND quick_hash IS NOT NULL "
+            "GROUP BY quick_hash")} if analyzer is not None else {}
         for start in range(0, len(todo), batch):
             if self._cancel.is_set():
                 return
             chunk = todo[start:start + batch]
             self._set(current_file=chunk[0][0])
-            results = workers.map(lambda f: process_file(*f, s.thumbs_dir, s.thumb_size, analyzer), chunk)
+            results = workers.map(lambda f: process_file(*f, s.thumbs_dir, s.thumb_size, analyzer, analyzed), chunk)
             recs = [r for r in results if r is not _TIMEOUT]
             self._bump(timeouts=len(chunk) - len(recs))  # skipped now; retried on the next scan
             for r in recs:
                 r["volume_id"] = volume_id
             self.db.upsert_images(recs)
             self._bump(processed=len(recs), errors=sum(1 for r in recs if r["error"]))
-            self._store_analyses([r for r in recs if "_analysis" in r])
+            self._store_analyses([r for r in recs if "_analysis" in r or "_twin" in r], analyzed)
         self.db.touch_present(unchanged)
         gone = known.keys() - seen
         self.db.set_missing(gone)
@@ -183,7 +188,7 @@ class Pipeline:
             self.db.execute("UPDATE images SET volume_id=? WHERE volume_id IS NULL AND path LIKE ? ESCAPE '\\'",
                             (volume_id, like_prefix(root)))  # pictures indexed before drive tracking existed
 
-    def _store_analyses(self, recs: list[dict]) -> None:
+    def _store_analyses(self, recs: list[dict], analyzed: dict[str, int]) -> None:
         """Save analyses done during the scan (the rows now exist, so they have ids)."""
         if not recs:
             return
@@ -195,10 +200,14 @@ class Pipeline:
             if row is None:
                 continue
             try:
-                apply_analysis(self.db, self.settings.thumbs_dir, row, rec["_analysis"])
+                if "_twin" in rec:
+                    copy_analysis(self.db, self.settings.thumbs_dir, rec["_twin"], row["id"])
+                else:
+                    apply_analysis(self.db, self.settings.thumbs_dir, row, rec["_analysis"])
+                    analyzed.setdefault(rec["quick_hash"], row["id"])  # later copies in this scan reuse it
             except Exception as exc:  # one bad picture must never stop the job
                 self._record_failure(row, f"{type(exc).__name__}: {exc}")
-        self._bump(analyzed=len(recs))
+        self._bump(analyzed=len(recs), duplicates=sum("_twin" in r for r in recs))
 
     # ---- analysis ---------------------------------------------------------------------------------
 
@@ -206,8 +215,7 @@ class Pipeline:
         with self._analyzer_lock:
             if self._analyzer is None:
                 self.models.ensure()
-                # One thread per inference: the pipeline already analyses several pictures in parallel.
-                self._analyzer = Analyzer(self.models, threads=1)
+                self._analyzer = Analyzer(self.models)
             return self._analyzer
 
     # Pictures waiting for analysis, skipping those on drives that aren't connected (they wait for the drive).
@@ -310,9 +318,7 @@ def apply_analysis(db: Database, thumbs_dir: Path, row: dict, result: AnalysisRe
         refs += db.query(
             "SELECT embedding, person_id FROM faces WHERE image_id=? AND person_id IS NOT NULL", (row["edited_from"],)
         )
-    for f in old:
-        if f["crop"]:
-            (thumbs_dir / f["crop"]).unlink(missing_ok=True)
+    _drop_crops(db, thumbs_dir, image_id)
 
     with db.conn() as c:
         c.execute("DELETE FROM faces WHERE image_id=?", (image_id,))
@@ -334,3 +340,31 @@ def apply_analysis(db: Database, thumbs_dir: Path, row: dict, result: AnalysisRe
             "category=CASE WHEN category_locked=1 THEN category ELSE ? END WHERE id=?",
             (len(result.faces), json.dumps(result.scores), result.clip_embedding.tobytes(), result.category, image_id),
         )
+
+
+def copy_analysis(db: Database, thumbs_dir: Path, src_id: int, dst_id: int) -> None:
+    """Give an exact duplicate the same analysis and faces as its twin (names included: same face)."""
+    if src_id == dst_id:
+        return
+    _drop_crops(db, thumbs_dir, dst_id)
+    with db.conn() as c:
+        c.execute("DELETE FROM faces WHERE image_id=?", (dst_id,))
+        c.execute(
+            "UPDATE images SET analyzed_at=datetime('now'), face_count=s.face_count, clip_scores=s.clip_scores, "
+            "clip_embedding=s.clip_embedding, category=CASE WHEN images.category_locked=1 THEN images.category "
+            "ELSE s.category END FROM (SELECT * FROM images WHERE id=?) AS s WHERE images.id=?", (src_id, dst_id))
+        # Face crops are shared with the twin (same pixels); re-analysis of either keeps the other's file.
+        c.execute(
+            "INSERT INTO faces(image_id, x, y, w, h, score, embedding, crop, person_id, assigned_by, ignored) "
+            "SELECT ?, x, y, w, h, score, embedding, crop, person_id, "
+            "CASE WHEN person_id IS NULL THEN NULL WHEN assigned_by='auto' THEN 'auto' ELSE 'carry' END, ignored "
+            "FROM faces WHERE image_id=?", (dst_id, src_id))
+
+
+def _drop_crops(db: Database, thumbs_dir: Path, image_id: int) -> None:
+    """Delete this picture's face-crop files, except those an exact duplicate still uses."""
+    for f in db.query(
+        "SELECT DISTINCT crop FROM faces f WHERE image_id=? AND crop IS NOT NULL AND NOT EXISTS "
+        "(SELECT 1 FROM faces o WHERE o.crop=f.crop AND o.image_id<>f.image_id)", (image_id,)
+    ):
+        (thumbs_dir / f["crop"]).unlink(missing_ok=True)

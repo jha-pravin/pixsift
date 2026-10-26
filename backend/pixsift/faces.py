@@ -13,7 +13,6 @@ suggestion the user confirms. Unnamed faces left over are grouped with HDBSCAN.
 from datetime import datetime
 
 import numpy as np
-from sklearn.cluster import HDBSCAN, AgglomerativeClustering
 
 from .db import Database
 
@@ -25,10 +24,12 @@ TIME_SCALE_YEARS = 4.0     # similarity weight halves to ~0.6 at 4 years apart (
 TIME_INFLUENCE = 0.3       # at most 30% of a similarity is lost to a large time gap
 CONFIRMED = ("user", "carry")  # reference faces: named by the user (or kept from their naming across edits)
 CARRY_MIN_SIM = 0.45       # keep a name across re-analysis of the same picture / edited copy
+# Grouping thresholds, tuned on a real library (149k faces, 31k user-confirmed, 158 people) to never mix two people
+# (including look-alike siblings) while keeping as many of a person's faces together as possible.
+NEIGHBOURS = 10            # each face's nearest faces considered for linking
+LINK_MIN_SIM = 0.82        # two faces are linked when each is among the other's nearest and this similar
+JOIN_MIN_SIM = 0.85        # groups whose average faces are this similar are joined
 GROUP_MIN_SIM = 0.35       # member must be this close to its group centroid
-MERGE_MIN_SIM = 0.6        # leaf groups whose centroids are this similar are the same person
-LEFTOVER_MIN_SIM = 0.5     # faces HDBSCAN left ungrouped are paired up when at least this similar
-LEFTOVER_MAX = 3000        # bound the O(n²) leftover pass; big libraries don't need it
 MIN_GROUP = 2              # smallest group that can exist
 ASK_MIN_DEFAULT = 3        # by default only ask about people seen in 3+ photos
 
@@ -42,62 +43,86 @@ def from_blob(b: bytes) -> np.ndarray:
 
 
 def recluster(db: Database) -> int:
-    """Group unnamed, non-ignored faces. Returns number of groups."""
+    """Group unnamed, non-ignored faces. Returns the number of groups."""
     rows = db.query("SELECT id, embedding FROM faces WHERE person_id IS NULL AND ignored=0")
-    db.execute("UPDATE faces SET cluster_id=NULL WHERE person_id IS NOT NULL OR ignored=1")
+    db.execute("UPDATE faces SET cluster_id=NULL")
     if len(rows) < MIN_GROUP:
-        db.execute("UPDATE faces SET cluster_id=NULL")
         return 0
-    x = np.stack([from_blob(r["embedding"]) for r in rows])
-    # On unit vectors euclidean distance is monotonic in cosine distance, and allows tree-based search.
-    # "leaf" gives small, tight groups (over-splitting is cheap to fix by naming; over-merging is not).
-    # Don't use cluster_selection_epsilon: sklearn's epsilon search crashes with NumPy >= 2.5.
-    labels = HDBSCAN(min_cluster_size=MIN_GROUP, min_samples=1, copy=True,
-                     cluster_selection_method="leaf").fit_predict(x)
-    labels = _group_leftovers(x, labels)
-    labels = _merge_close_groups(x, labels)
-    # Guard against chaining: members far from their group's centroid go back to "ungrouped".
-    for lbl in set(labels) - {-1}:
-        idx = np.flatnonzero(labels == lbl)
-        cent = x[idx].mean(axis=0)
-        cent /= np.linalg.norm(cent)
-        labels[idx[x[idx] @ cent < GROUP_MIN_SIM]] = -1
+    labels = group_faces(np.stack([from_blob(r["embedding"]) for r in rows]))
     with db.conn() as c:
-        c.executemany(
-            "UPDATE faces SET cluster_id=? WHERE id=?",
-            ((int(lbl) if lbl >= 0 else None, r["id"]) for lbl, r in zip(labels, rows)),
-        )
-    return int(labels.max() + 1) if len(labels) else 0
+        c.executemany("UPDATE faces SET cluster_id=? WHERE id=?",
+                      ((int(lbl), r["id"]) for lbl, r in zip(labels, rows) if lbl >= 0))
+    return int(labels.max() + 1)
 
 
-def _group_leftovers(x: np.ndarray, labels: np.ndarray) -> np.ndarray:
-    """HDBSCAN never forms a group when *all* points belong to one person (e.g. the last unnamed person, or a
-    small library), so faces it left ungrouped get a second, simpler pass: average-linkage clustering."""
-    idx = np.flatnonzero(labels == -1)
-    if not 2 <= len(idx) <= LEFTOVER_MAX:
-        return labels
-    sub = AgglomerativeClustering(n_clusters=None, metric="cosine", linkage="average",
-                                  distance_threshold=1 - LEFTOVER_MIN_SIM).fit_predict(x[idx])
-    labels = labels.copy()
-    next_label = labels.max() + 1
-    for s in np.unique(sub):
-        members = idx[sub == s]
-        if len(members) >= MIN_GROUP:
-            labels[members] = next_label
-            next_label += 1
-    return labels
+def group_faces(x: np.ndarray, link: float = LINK_MIN_SIM, join: float = JOIN_MIN_SIM) -> np.ndarray:
+    """Group label per face (-1 = ungrouped). Mutual nearest-neighbour linking, then joining split groups.
+
+    1. Link faces that are among each other's NEIGHBOURS nearest and at least LINK_MIN_SIM similar.
+       Requiring both directions stops one-way chains from joining different people.
+    2. Connected faces form groups; members far from their group's average leave it.
+    3. Groups whose averages are at least JOIN_MIN_SIM similar are the same person split apart: joined.
+    """
+    n = len(x)
+    # Each face's NEIGHBOURS most similar faces, considering only pairs similar enough to link at all
+    # (a sparse set), so this stays fast at 100k+ faces.
+    src, dst, val = [], [], []
+    for s in range(0, n, 1024):  # chunked so memory stays ~1024 x n floats
+        block = x[s:s + 1024] @ x.T
+        block[np.arange(len(block)), np.arange(s, s + len(block))] = -1  # not your own neighbour
+        r, c = np.nonzero(block >= link)
+        src.append(r + s)
+        dst.append(c)
+        val.append(block[r, c])
+    src, dst, val = np.concatenate(src), np.concatenate(dst), np.concatenate(val)
+    order = np.lexsort((-val, src))  # by face, most similar first
+    src, dst = src[order], dst[order]
+    rank = np.arange(len(src)) - np.searchsorted(src, src)  # position within each face's list
+    src, dst = src[rank < NEIGHBOURS], dst[rank < NEIGHBOURS]
+    mutual = np.isin(dst * n + src, src * n + dst)
+    labels = _components(n, src[mutual], dst[mutual])
+
+    # Tighten each group and compute its average face.
+    out = np.full(n, -1)
+    cents = []
+    order = np.argsort(labels, kind="stable")
+    for g in np.split(order, np.flatnonzero(np.diff(labels[order])) + 1):
+        if len(g) < MIN_GROUP:
+            continue
+        c = _unit(x[g].mean(axis=0))
+        g = g[x[g] @ c >= GROUP_MIN_SIM]
+        if len(g) >= MIN_GROUP:
+            out[g] = len(cents)
+            cents.append(_unit(x[g].mean(axis=0)))
+    if len(cents) < 2:
+        return out
+    cents = np.stack(cents)
+    a, b = [], []
+    for s in range(0, len(cents), 2048):
+        rows, cols = np.nonzero(cents[s:s + 2048] @ cents.T >= join)
+        keep = cols > rows + s
+        a.append(rows[keep] + s)
+        b.append(cols[keep])
+    joined = _components(len(cents), np.concatenate(a), np.concatenate(b))
+    return np.where(out >= 0, joined[np.maximum(out, 0)], -1)
 
 
-def _merge_close_groups(x: np.ndarray, labels: np.ndarray) -> np.ndarray:
-    """Join groups of the same person that HDBSCAN split apart (average linkage on group centroids)."""
-    ids = np.array(sorted(set(labels.tolist()) - {-1}))
-    if len(ids) < 2:
-        return labels
-    cents = np.stack([x[labels == i].mean(axis=0) for i in ids])
-    merged = AgglomerativeClustering(n_clusters=None, metric="cosine", linkage="average",
-                                     distance_threshold=1 - MERGE_MIN_SIM).fit_predict(cents)
-    remap = dict(zip(ids.tolist(), merged.tolist()))
-    return np.array([remap.get(int(lbl), -1) for lbl in labels])
+def _components(n: int, a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Connected-component labels 0..m-1 for an undirected graph given as edge lists (vectorised)."""
+    labels = np.arange(n)
+    while True:
+        new = labels.copy()
+        np.minimum.at(new, a, labels[b])
+        np.minimum.at(new, b, labels[a])
+        new = new[new]  # pointer jumping: converge in few rounds
+        if np.array_equal(new, labels):
+            break
+        labels = new
+    return np.unique(labels, return_inverse=True)[1]
+
+
+def _unit(v: np.ndarray) -> np.ndarray:
+    return v / max(float(np.linalg.norm(v)), 1e-12)
 
 
 def _years(iso: str | None) -> float:

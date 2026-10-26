@@ -34,7 +34,7 @@ If macOS instead says the app is "damaged", open Terminal and run
 
 1. **Sources**: click **Choose folders…** and pick one or two folders with pictures (a few hundred is plenty;
    hold ⌘ on Mac or Ctrl on Windows to choose several). Click **Scan now**. The first scan downloads the AI
-   models once (about 195 MB), then shows progress.
+   models once (about 128 MB), then shows progress.
 2. **Dashboard**: are photos, documents, screenshots and graphics sorted sensibly?
 3. **People**: give a few face groups a name. Then:
    - Does PixSift find the same person in other photos ("recognised automatically")?

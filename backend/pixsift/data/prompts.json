@@ -1,0 +1,34 @@
+{
+ "document": [
+  "a scanned document with text",
+  "a page of printed text",
+  "a paper receipt",
+  "an invoice or a form with text",
+  "handwritten notes on paper",
+  "a photo of a document on a table"
+ ],
+ "screenshot": [
+  "a screenshot of a computer screen",
+  "a screenshot of a phone app",
+  "a screenshot of a website",
+  "a screenshot of a chat conversation",
+  "a screenshot of software user interface"
+ ],
+ "photo": [
+  "a photo of a person",
+  "a portrait photo",
+  "a group photo of people",
+  "a photo of a landscape",
+  "a photo of food or drink",
+  "a photo of an animal",
+  "a photo of a city street",
+  "a close-up photo of an object"
+ ],
+ "graphic": [
+  "an illustration or drawing",
+  "a logo",
+  "a meme",
+  "a poster design",
+  "a cartoon"
+ ]
+}

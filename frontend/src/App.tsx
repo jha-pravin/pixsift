@@ -63,7 +63,7 @@ function Shell() {
   return (
     <div className="shell">
       <nav className="sidebar" aria-label="Main">
-        <div className="brand"><span className="logo" aria-hidden="true" />PixSift</div>
+        <div className="brand"><img src="/favicon.svg" className="logo" alt="" />PixSift</div>
         <NavLink to="/" end><Icon name="home" /> Dashboard</NavLink>
         <NavLink to="/library" end className={() => (onLibrary && !category ? 'active' : '')}><Icon name="grid" /> Library <span className="count">{stats?.total.toLocaleString()}</span></NavLink>
         <NavLink to="/people"><Icon name="people" /> People

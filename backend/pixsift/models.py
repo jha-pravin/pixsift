@@ -17,23 +17,20 @@ class ModelFile:
     purpose: str
 
 
-_HF = "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main"
-_ZOO = "https://github.com/opencv/opencv_zoo/raw/main/models"
-
 MODELS = (
-    ModelFile("face_detection_yunet_2023mar.onnx",
-              f"{_ZOO}/face_detection_yunet/face_detection_yunet_2023mar.onnx", 232_589,
-              "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4", "face detection"),
     ModelFile("face_recognition_sface_2021dec.onnx",
-              f"{_ZOO}/face_recognition_sface/face_recognition_sface_2021dec.onnx", 38_696_353,
-              "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79", "face recognition"),
-    ModelFile("clip_vision_quantized.onnx", f"{_HF}/onnx/vision_model_quantized.onnx", 89_117_001,
-              "583fd1110a514667812fee7d684952aaf82a99b959760c8d7dca7e0ab9839299", "picture type"),
-    ModelFile("clip_text_quantized.onnx", f"{_HF}/onnx/text_model_quantized.onnx", 64_504_507,
-              "73baab855d406190da9faa498cfedf65f15cf309f4cc7385b7b032e6d08e5c3a", "picture type"),
-    ModelFile("clip_tokenizer.json", f"{_HF}/tokenizer.json", 2_224_119,
-              "f7f3b7af117d467b58374797691a6438d3e6b9e9cef800dfd5dced7f697a90cd", "picture type"),
+              "https://github.com/opencv/opencv_zoo/raw/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx",
+              38_696_353, "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79", "face recognition"),
+    ModelFile("clip_vision_quantized.onnx",
+              "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/vision_model_quantized.onnx",
+              89_117_001, "583fd1110a514667812fee7d684952aaf82a99b959760c8d7dca7e0ab9839299", "picture type"),
 )
+# Face detection (YuNet, 233 KB) and the picture-type prompt embeddings ship inside the app (pixsift/data).
+
+# Files earlier versions downloaded that are no longer needed (prompt embeddings and the face detector now
+# ship with the app); removed to free ~67 MB.
+OBSOLETE = ("clip_text_quantized.onnx", "clip_tokenizer.json", "face_detection_yunet_2023mar.onnx",
+            "mobileclip_s0_vision.onnx")
 
 
 class ModelStore:
@@ -66,6 +63,8 @@ class ModelStore:
         """Download any missing model files (atomic rename, so a partial file is never used)."""
         with self._lock:
             self.dir.mkdir(parents=True, exist_ok=True)
+            for name in OBSOLETE:
+                self.path(name).unlink(missing_ok=True)
             for m in self.missing():
                 if cancel is not None and cancel.is_set():
                     return

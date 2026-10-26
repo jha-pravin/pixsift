@@ -69,12 +69,14 @@ PIXSIFT_TOKEN=dev npm --prefix frontend run dev   # http://localhost:5173
 ## First run
 
 1. **Sources**: add folders (Pictures is pre-selected) or drives, then press **Scan now**.
-2. The first scan downloads the AI models once (about 195 MB, from Hugging Face and the OpenCV model zoo). Each
+2. The first scan downloads two AI models once (about 128 MB, from Hugging Face and the OpenCV model zoo). Each
    file is checked against a pinned SHA-256. After that PixSift works fully offline.
 3. **People**: name the face groups. Every picture of that person is then one click away.
 
-Speed on an Apple-silicon laptop is roughly 50 ms per picture for analysis, i.e. about 20,000 pictures per
-15–20 minutes. The first scan takes longest; re-scans only process new or changed files.
+**Speed.** Each picture is read and decoded once (with Apple ImageIO's hardware decoder on Macs), and the
+thumbnail, faces and picture type all come from that one decode. Exact duplicates reuse the first copy's
+results without being decoded. On an M3 MacBook Air that's about 13 new 12-megapixel photos per second, and
+over 1,000 duplicates per second. Re-scans only process new or changed files.
 
 ## How recognition improves over time
 
@@ -101,13 +103,16 @@ frontend/   React + TypeScript + Vite UI (HashRouter)
 backend/    Python engine (FastAPI), localhost only
   pixsift/scanner.py     folder walk with skip rules
   pixsift/media.py       quick hash + EXIF + thumbnail (one image open)
-  pixsift/analyzer.py    faces: OpenCV YuNet + SFace; picture type: CLIP ViT-B/32 (ONNX, quantised)
-  pixsift/faces.py       HDBSCAN grouping, name suggestions, carry-over of names
+  pixsift/decode.py      one decode per picture (Apple ImageIO on macOS, Pillow elsewhere)
+  pixsift/analyzer.py    picture type (CLIP ViT-B/32) + faces, all on ONNX Runtime (Core ML on macOS)
+  pixsift/facenet.py     YuNet face detection + SFace fingerprints without OpenCV
+  pixsift/faces.py       face grouping (mutual nearest neighbours), name matching, carry-over of names
   pixsift/pipeline.py    background job: models → scan → analyse → group
   pixsift/editor.py      edits (lossless JPEG orientation, copy/backup handling)
-  pixsift/api.py, people_api.py   HTTP API
+  pixsift/api.py         app factory; routes in system_api.py, images_api.py, people_api.py
   pixsift/desktop.py     native window (pywebview) + folder picker
-packaging/  PyInstaller spec, icon, build scripts
+packaging/  PyInstaller spec, logo (logo.svg + make_icon.py), build scripts
+tools/      build-time model assets
 ```
 
 ## Scanning rules

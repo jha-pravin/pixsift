@@ -80,12 +80,14 @@ def thumb_relpath(digest: str) -> str:
 
 
 def process_file(path: str, size: int, mtime: float, thumbs_dir: Path, thumb_size: int,
-                 analyzer=None) -> dict[str, Any]:
+                 analyzer=None, analyzed_hashes: dict[str, int] | None = None) -> dict[str, Any]:
     """Build a full `images` row for one file, reading and decoding it only once. Never raises: failures are
     recorded in `error`.
 
     With an analyzer, the same decoded image is also analysed (faces + picture type) and the result is
     returned under "_analysis" (None = analysed, nothing usable). Without the key, analysis is still pending.
+    A file identical to one already analysed (same quick hash) isn't decoded at all: "_twin" names that
+    picture, whose results get copied.
     """
     p = Path(path)
     rec: dict[str, Any] = {
@@ -105,7 +107,10 @@ def process_file(path: str, size: int, mtime: float, thumbs_dir: Path, thumb_siz
             rec["width"], rec["height"] = w, h
         rel = thumb_relpath(digest)
         out = thumbs_dir / rel
-        if analyzer is not None or not out.exists():
+        twin = (analyzed_hashes or {}).get(digest)
+        if twin is not None and out.exists():
+            rec["_twin"] = twin  # exact duplicate of an analysed picture: nothing to decode or analyse
+        elif analyzer is not None or not out.exists():
             big = decode(path, ANALYSIS_MAX_SIDE if analyzer is not None else thumb_size * 2)
             if not out.exists():
                 thumb = big.copy()

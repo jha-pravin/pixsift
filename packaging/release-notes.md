@@ -17,7 +17,7 @@ These builds aren't signed yet, so the first launch shows a security prompt.
 - **Windows:** unzip the whole folder, open it and run **PixSift.exe**. If SmartScreen appears, click
   **More info → Run anyway**.
 
-The first scan downloads the on-device AI models once (about 195 MB). After that, PixSift works offline and
+The first scan downloads the on-device AI models once (about 128 MB). After that, PixSift works offline and
 nothing leaves your computer.
 
 Testing PixSift? See the [testing guide](https://github.com/jha-pravin/pixsift/blob/main/TESTING.md).

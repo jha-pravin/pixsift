@@ -13,7 +13,7 @@ from pillow_heif import register_heif_opener
 
 register_heif_opener()
 
-ANALYSIS_MAX_SIDE = 1280  # one decode at this size feeds the thumbnail, face crops and models
+ANALYSIS_MAX_SIDE = 960  # one decode at this size feeds the thumbnail, face detection, crops and models
 
 try:  # pyobjc's Quartz bindings ship with the macOS desktop dependencies
     if sys.platform != "darwin":

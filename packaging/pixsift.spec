@@ -11,12 +11,15 @@ mac = sys.platform == "darwin"
 a = Analysis(
     [str(Path(SPECPATH) / "launcher.py")],
     pathex=[str(ROOT / "backend")],
-    datas=[(str(ROOT / "frontend" / "dist"), "ui")],
+    datas=[(str(ROOT / "frontend" / "dist"), "ui"), (str(ROOT / "backend" / "pixsift" / "data"), "pixsift/data")],
     binaries=collect_dynamic_libs("pillow_heif"),
     hiddenimports=collect_submodules("uvicorn") + collect_submodules("pixsift"),
-    excludes=["tkinter", "matplotlib", "pytest", "IPython", "skimage", "PyInstaller"],
+    excludes=["tkinter", "matplotlib", "pytest", "IPython", "PyInstaller", "cv2", "sklearn", "scipy", "tokenizers",
+              "onnx", "PIL.ImageQt", "PIL.ImageTk", "numpy.f2py", "pydoc_data", "unittest", "lib2to3"],
     noarchive=False,
 )
+# onnxruntime's Python module is self-contained; its separate C-API library (~32 MB) is never loaded.
+a.binaries = [b for b in a.binaries if not Path(b[0]).name.startswith("libonnxruntime.")]
 pyz = PYZ(a.pure)
 exe = EXE(
     pyz, a.scripts, [],
@@ -34,7 +37,7 @@ if mac:
         icon=str(Path(SPECPATH) / "pixsift.icns"),
         bundle_identifier="app.pixsift.desktop",
         info_plist={
-            "CFBundleShortVersionString": "0.3.0",
+            "CFBundleShortVersionString": "0.4.0",
             "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": "12.0",
             # Shown by macOS the first time PixSift scans these protected locations.

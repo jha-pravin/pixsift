@@ -22,6 +22,7 @@ export function Dashboard() {
   if (s.total === 0) {
     return (
       <div className="page onboarding">
+        <img src="/favicon.svg" alt="" width={96} height={96} />
         <h1>Welcome to PixSift</h1>
         <p className="lead">Find every picture on this computer, sorted into documents, screenshots and photos, with the
           people in them recognised on-device. Nothing leaves your machine.</p>
