@@ -3,6 +3,11 @@
 Thanks for trying PixSift! It takes about 15 minutes. Everything runs on your computer: your pictures, faces
 and names are never uploaded.
 
+**Testers:** this page covers installing and a quick tour. For a full pass, use the
+[test plan](docs/testing/TEST_PLAN.md) (numbered test cases with expected results), and report with the
+[bug report](https://github.com/jha-pravin/pixsift/issues/new?template=bug_report.yml) and
+[test session report](https://github.com/jha-pravin/pixsift/issues/new?template=test_report.yml) forms.
+
 ## 1. Install
 
 Download the file for your computer from the
@@ -52,7 +57,9 @@ If macOS instead says the app is "damaged", open Terminal and run
 
 ## 3. Tell us how it went
 
-Please [open an issue](https://github.com/jha-pravin/pixsift/issues/new) (or reply to whoever sent you this) with:
+Please file a [bug report](https://github.com/jha-pravin/pixsift/issues/new?template=bug_report.yml) for each
+problem and a [test session report](https://github.com/jha-pravin/pixsift/issues/new?template=test_report.yml)
+when you're done (or reply to whoever sent you this). Useful details:
 
 - your computer and system version (e.g. "MacBook Air M2, macOS 15.3" or "Windows 11 laptop");
 - roughly how many pictures you scanned and how long the first scan took;

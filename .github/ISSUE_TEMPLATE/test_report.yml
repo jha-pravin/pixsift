@@ -1,0 +1,56 @@
+name: Test session report
+description: Summary after a testing session (one per tester per release)
+title: "Test report: v0.4.0 on "
+labels: ["test report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use the test plan: [docs/testing/TEST_PLAN.md](https://github.com/jha-pravin/pixsift/blob/main/docs/testing/TEST_PLAN.md).
+        File separate **Bug reports** for problems and link them here.
+  - type: input
+    id: version
+    attributes:
+      label: PixSift version
+      placeholder: v0.4.0
+    validations:
+      required: true
+  - type: input
+    id: computer
+    attributes:
+      label: Computer and system version
+      placeholder: "Dell XPS 13, Windows 11 23H2 / MacBook Air M2, macOS 15.3"
+    validations:
+      required: true
+  - type: input
+    id: library
+    attributes:
+      label: Library tested
+      description: Roughly how many pictures, mix (iPhone/HEIC, camera, screenshots), internal disk or external drive
+      placeholder: "~3,000 pictures, mostly iPhone, one external drive"
+  - type: input
+    id: speed
+    attributes:
+      label: First scan time
+      placeholder: "2,800 pictures in 5 minutes"
+  - type: textarea
+    id: results
+    attributes:
+      label: Results per test case
+      description: Pass / Fail / Blocked / Not tested. Add the bug number for failures.
+      value: |
+        A1  A2  A3
+        B1  B2  B3  B4  B5  B6  B7
+        C1  C2  C3
+        D1  D2  D3  D4  D5  D6  D7  D8  D9
+        E1  E2  E3  E4  E5  E6  E7  E8
+        F1  F2  F3
+        G1  G2  G3
+        H1  H2  H3  H4
+    validations:
+      required: true
+  - type: textarea
+    id: impressions
+    attributes:
+      label: Overall impressions
+      description: What felt good, what was confusing, what you'd change first.

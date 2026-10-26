@@ -1,0 +1,64 @@
+name: Bug report
+description: Something in PixSift didn't work as expected
+title: "Bug: "
+labels: ["bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing! Please don't attach private photos; a description is enough.
+        Security problems: please don't post them here; see SECURITY.md.
+  - type: input
+    id: test_case
+    attributes:
+      label: Test case
+      description: The test plan ID, if any (e.g. D3). See docs/testing/TEST_PLAN.md.
+      placeholder: D3
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you see, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open People
+        2. Click …
+        3. …
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - Blocker (can't continue testing)
+        - Major (a feature doesn't work)
+        - Minor (works, but wrong or confusing)
+        - Cosmetic (looks off)
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Computer
+      options: ["Windows 11", "Windows 10", "macOS (Apple silicon)", "macOS (Intel)", "Other"]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: PixSift version
+      description: From the download file / release page
+      placeholder: v0.4.0
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or anything else
+      description: Error messages, a screenshot of the app, how many pictures you scanned, etc.
